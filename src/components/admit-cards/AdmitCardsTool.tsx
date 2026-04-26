@@ -1,15 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReactToPrint } from "react-to-print";
-import { useRef } from "react";
 import { toast } from "sonner";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { Button } from "@/components/ui/Button";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
 import { SchoolLogo } from "@/components/shared/SchoolLogo";
+import { ORDERED_CLASSES, FIXED_SUBJECTS, EXAM_TYPES, EXAM_TYPE_DB_VALUE } from "@/lib/constants/academics";
 
-const EXAM_TYPES = ["Monthly", "Mid-Term", "Final"] as const;
+const SCHOOL_NAME = "NEW OXFORD GRAMMER SCHOOL";
+
+/** Map fixed display names to possible DB `subjects.name` values */
+const SUBJECT_NAME_ALIASES: Record<string, string[]> = {
+  Math: ["Math", "Mathematics"],
+};
 
 type StudentRow = {
   id: string;
@@ -22,19 +27,114 @@ type StudentRow = {
   classes: { name: string } | null;
 };
 
-type ScheduleRow = {
+type DbScheduleRow = {
   id: string;
+  subject_id: string;
   exam_date: string;
   start_time: string;
   end_time: string;
   venue: string | null;
-  class_id: string | null;
-  subjects: { name: string } | null;
 };
 
-function fmtTime(t: string) {
-  if (!t) return "";
-  return t.length >= 5 ? t.slice(0, 5) : t;
+type ScheduleDraftRow = {
+  subjectId: string | null;
+  displayName: string;
+  exam_date: string;
+  start_time: string;
+  end_time: string;
+  venue: string;
+};
+
+function findSubjectIdForFixedName(
+  subs: { id: string; name: string }[],
+  fixedName: (typeof FIXED_SUBJECTS)[number],
+): string | null {
+  const aliases = [fixedName, ...(SUBJECT_NAME_ALIASES[fixedName] ?? [])];
+  const lower = (s: string) => s.trim().toLowerCase();
+  for (const sub of subs) {
+    if (aliases.some((a) => lower(a) === lower(sub.name))) return sub.id;
+  }
+  for (const sub of subs) {
+    if (aliases.some((a) => lower(sub.name).includes(lower(a)) || lower(a).includes(lower(sub.name)))) return sub.id;
+  }
+  return null;
+}
+
+function emptyDraftRows(subjectIds: (string | null)[]): ScheduleDraftRow[] {
+  return FIXED_SUBJECTS.map((displayName, i) => ({
+    subjectId: subjectIds[i] ?? null,
+    displayName,
+    exam_date: "",
+    start_time: "",
+    end_time: "",
+    venue: "",
+  }));
+}
+
+function isScheduleRowComplete(r: ScheduleDraftRow): boolean {
+  return Boolean(
+    r.subjectId &&
+      r.exam_date.trim() &&
+      r.start_time.trim() &&
+      r.end_time.trim() &&
+      r.venue.trim(),
+  );
+}
+
+function incompleteSubjectLabels(rows: ScheduleDraftRow[]): string[] {
+  return rows.filter((r) => !isScheduleRowComplete(r)).map((r) => r.displayName);
+}
+
+function mergeDraftWithDb(
+  base: ScheduleDraftRow[],
+  dbRows: DbScheduleRow[],
+  subjectIdToDisplay: Map<string, string>,
+): ScheduleDraftRow[] {
+  const bySubject = new Map<string, DbScheduleRow>();
+  dbRows.forEach((r) => bySubject.set(r.subject_id, r));
+  return base.map((row) => {
+    if (!row.subjectId) return row;
+    const d = bySubject.get(row.subjectId);
+    if (!d) return row;
+    const fmtTime = (t: string) => {
+      const s = String(t ?? "").trim();
+      if (!s) return "";
+      return s.length >= 5 ? s.slice(0, 5) : s;
+    };
+    return {
+      ...row,
+      exam_date: d.exam_date?.slice(0, 10) ?? "",
+      start_time: fmtTime(String(d.start_time)),
+      end_time: fmtTime(String(d.end_time)),
+      venue: (d.venue ?? "").trim(),
+    };
+  });
+}
+
+function formatDateDdMmYyyy(iso: string) {
+  if (!iso) return "—";
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}-${m}-${y}`;
+}
+
+function formatTime12(hhmm: string) {
+  if (!hhmm) return "—";
+  const parts = hhmm.split(":");
+  const h = Number(parts[0]);
+  const m = Number(parts[1] ?? 0);
+  if (Number.isNaN(h)) return hhmm;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+/** Postgres `time` — HH:MM:SS (caller must pass a non-empty valid time) */
+function toPgTime(t: string) {
+  const s = t.trim();
+  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s;
+  if (/^\d{2}:\d{2}$/.test(s)) return `${s}:00`;
+  throw new Error(`Invalid time: ${t}`);
 }
 
 function chunkPairs<T>(arr: T[]): T[][] {
@@ -43,36 +143,37 @@ function chunkPairs<T>(arr: T[]): T[][] {
   return out;
 }
 
-function AdmitCardBody({
-  schoolName,
-  examType,
+function AdmitCardPrint({
+  examTypeLabel,
   examYear,
   student,
-  rows,
-  fmtTime: ft,
+  scheduleOrdered,
 }: {
-  schoolName: string;
-  examType: string;
+  examTypeLabel: string;
   examYear: string;
   student: StudentRow;
-  rows: ScheduleRow[];
-  fmtTime: (t: string) => string;
+  scheduleOrdered: ScheduleDraftRow[];
 }) {
+  const clsName = student.classes?.name ?? "—";
   return (
-    <>
-      <div className="mb-3 flex items-start justify-between border-b border-black pb-2">
-        <div>
+    <div className="admit-card-inner flex h-full flex-col border border-black bg-white p-3 text-black">
+      <div className="flex items-start justify-between border-b border-black pb-2">
+        <div className="min-w-0 flex-1 pr-2">
           <div className="flex items-center gap-2">
-            <SchoolLogo size={28} className="rounded-md" />
-            <h1 className="text-lg font-bold">{schoolName}</h1>
+            <SchoolLogo size={36} className="shrink-0 rounded-md" />
+            <div>
+              <p className="text-[11px] font-bold leading-tight">{SCHOOL_NAME}</p>
+              <p className="text-[9px] font-semibold uppercase tracking-wide">Examination Admit Card</p>
+              <p className="text-[9px] text-neutral-700">
+                {examTypeLabel} — {examYear}
+              </p>
+            </div>
           </div>
-          <p className="text-xs">
-            Admit Card — {examType} {examYear}
-          </p>
         </div>
-        <ProfilePhoto src={student.profile_photo} alt="" size={64} variant="card" className="border border-black" />
+        <ProfilePhoto src={student.profile_photo} alt="" size={56} variant="card" className="shrink-0 border border-black" />
       </div>
-      <div className="grid gap-0.5 text-xs">
+
+      <div className="mt-2 space-y-0.5 text-[9px] leading-snug">
         <p>
           <strong>Student ID:</strong> {student.student_uid ?? "—"}
         </p>
@@ -83,44 +184,51 @@ function AdmitCardBody({
           <strong>Father:</strong> {student.father_name}
         </p>
         <p>
-          <strong>Class:</strong> {student.classes?.name ?? "—"} &nbsp; <strong>Roll:</strong> {student.roll_number}
+          <strong>Class:</strong> {clsName}
+        </p>
+        <p>
+          <strong>Roll No:</strong> {student.roll_number}
         </p>
       </div>
-      <table className="mt-2 w-full border-collapse border border-black text-[10px]">
+
+      <p className="mt-2 text-[9px] font-bold">Examination schedule</p>
+      <table className="mt-0.5 w-full border-collapse border border-black text-[8px]">
         <thead>
-          <tr>
-            <th className="border border-black p-0.5">Date</th>
-            <th className="border border-black p-0.5">Subject</th>
-            <th className="border border-black p-0.5">Time</th>
-            <th className="border border-black p-0.5">Venue</th>
+          <tr className="bg-neutral-100">
+            <th className="border border-black px-0.5 py-0.5 text-left">Date</th>
+            <th className="border border-black px-0.5 py-0.5 text-left">Subject</th>
+            <th className="border border-black px-0.5 py-0.5">Time</th>
+            <th className="border border-black px-0.5 py-0.5">Venue</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.id}>
-              <td className="border border-black p-0.5">{r.exam_date}</td>
-              <td className="border border-black p-0.5">{r.subjects?.name ?? "—"}</td>
-              <td className="border border-black p-0.5">
-                {ft(r.start_time)} – {ft(r.end_time)}
+          {scheduleOrdered.map((row) => (
+            <tr key={row.displayName}>
+              <td className="border border-black px-0.5 py-0.5">{row.exam_date ? formatDateDdMmYyyy(row.exam_date) : "—"}</td>
+              <td className="border border-black px-0.5 py-0.5">{row.displayName}</td>
+              <td className="border border-black px-0.5 py-0.5 text-center">
+                {row.exam_date ? `${formatTime12(row.start_time)} – ${formatTime12(row.end_time)}` : "—"}
               </td>
-              <td className="border border-black p-0.5">{r.venue ?? "—"}</td>
+              <td className="border border-black px-0.5 py-0.5">{row.venue || "—"}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div className="mt-2 text-[10px]">
-        <p className="font-semibold">Instructions</p>
-        <ul className="list-inside list-disc">
-          <li>Arrive 15 minutes before the paper begins.</li>
-          <li>Bring this admit card and your school ID.</li>
-          <li>Mobile phones and unfair means are strictly prohibited.</li>
+
+      <div className="mt-2 flex-1 text-[8px]">
+        <p className="font-bold">Instructions</p>
+        <ul className="mt-0.5 list-inside list-disc space-y-0.5">
+          <li>Bring this card to every exam</li>
+          <li>No card = No entry allowed</li>
+          <li>Arrive 15 minutes before exam time</li>
         </ul>
       </div>
-      <div className="mt-4 flex justify-end text-xs">
-        <p>_________________________</p>
+
+      <div className="mt-auto flex justify-between border-t border-black pt-2 text-[8px]">
+        <span>Principal: ____________</span>
+        <span>Date: ____________</span>
       </div>
-      <p className="text-right text-[10px]">Principal / Controller of Examinations</p>
-    </>
+    </div>
   );
 }
 
@@ -128,208 +236,226 @@ export function AdmitCardsTool() {
   const supabase = useSupabaseClient();
   const printRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ contentRef: printRef });
-  const schoolName = process.env.NEXT_PUBLIC_SCHOOL_NAME ?? "NEW OXFORD GRAMMER SCHOOL";
 
-  const [examType, setExamType] = useState<string>("Final");
+  const [examTypeLabel, setExamTypeLabel] = useState<(typeof EXAM_TYPES)[number]>("Final Exam");
+  const examTypeDb = EXAM_TYPE_DB_VALUE[examTypeLabel];
   const [examYear, setExamYear] = useState(String(new Date().getFullYear()));
-  const [classId, setClassId] = useState<string>("");
-  const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
-  const [students, setStudents] = useState<StudentRow[]>([]);
-  const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
 
-  const [newVenue, setNewVenue] = useState("");
-  const [newDate, setNewDate] = useState(new Date().toISOString().slice(0, 10));
-  const [newStart, setNewStart] = useState("09:00");
-  const [newEnd, setNewEnd] = useState("10:00");
-  const [newSubjectId, setNewSubjectId] = useState("");
-  const [newClassScope, setNewClassScope] = useState<string>("");
-  const [subjectsPick, setSubjectsPick] = useState<{ id: string; name: string }[]>([]);
-  const [adding, setAdding] = useState(false);
+  const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
+  const [classId, setClassId] = useState("");
+
+  const [dbSubjects, setDbSubjects] = useState<{ id: string; name: string }[]>([]);
+  const [scheduleRows, setScheduleRows] = useState<ScheduleDraftRow[]>(() => emptyDraftRows(FIXED_SUBJECTS.map(() => null)));
+
+  const [scheduleSaved, setScheduleSaved] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [showCardPreview, setShowCardPreview] = useState(false);
+  const [loadingSchedule, setLoadingSchedule] = useState(false);
+
+  const className = useMemo(() => classes.find((c) => c.id === classId)?.name ?? "", [classes, classId]);
 
   useEffect(() => {
     void supabase
       .from("classes")
       .select("id,name")
-      .order("name")
-      .then(({ data }) => setClasses(data ?? []));
+      .then(({ data }) => {
+        const list = data ?? [];
+        const order = new Map(ORDERED_CLASSES.map((n, i) => [n, i]));
+        setClasses(
+          [...list].sort((a, b) => (order.get(a.name) ?? 99) - (order.get(b.name) ?? 99)),
+        );
+      });
   }, [supabase]);
 
-  useEffect(() => {
-    if (!newClassScope) {
-      setSubjectsPick([]);
+  const loadScheduleAndDraft = useCallback(async () => {
+    if (!classId) {
+      setDbSubjects([]);
+      setScheduleRows(emptyDraftRows(FIXED_SUBJECTS.map(() => null)));
+      setScheduleSaved(false);
+      setStudents([]);
+      setShowCardPreview(false);
       return;
     }
-    void supabase
-      .from("subjects")
-      .select("id,name")
-      .eq("class_id", newClassScope)
-      .order("name")
-      .then(({ data }) => setSubjectsPick(data ?? []));
-  }, [newClassScope, supabase]);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    let q = supabase
+    setLoadingSchedule(true);
+    const { data: subs } = await supabase.from("subjects").select("id,name").eq("class_id", classId).order("name");
+    const subjectList = subs ?? [];
+    setDbSubjects(subjectList);
+
+    const ids = FIXED_SUBJECTS.map((name) => findSubjectIdForFixedName(subjectList, name));
+    let draft = emptyDraftRows(ids);
+
+    const { data: existing } = await supabase
       .from("exam_schedules")
-      .select("id,exam_date,start_time,end_time,venue,class_id,subjects(name)")
-      .eq("exam_type", examType)
-      .eq("exam_year", examYear)
-      .order("exam_date")
-      .order("start_time");
-    const { data: sch } = await q;
-    let list = (sch ?? []) as unknown as ScheduleRow[];
-    if (classId) {
-      list = list.filter((r) => !r.class_id || r.class_id === classId);
-    }
-    setSchedules(list);
+      .select("id,subject_id,exam_date,start_time,end_time,venue")
+      .eq("class_id", classId)
+      .eq("exam_type", examTypeDb)
+      .eq("exam_year", examYear);
 
-    let stQ = supabase
+    const idToDisplay = new Map<string, string>();
+    FIXED_SUBJECTS.forEach((fn, i) => {
+      if (ids[i]) idToDisplay.set(ids[i]!, fn);
+    });
+
+    if (existing?.length) {
+      draft = mergeDraftWithDb(draft, existing as DbScheduleRow[], idToDisplay);
+      setScheduleSaved(draft.every(isScheduleRowComplete));
+    } else {
+      setScheduleSaved(false);
+    }
+
+    setScheduleRows(draft);
+    setLoadingSchedule(false);
+
+    const { data: studs } = await supabase
       .from("students")
       .select("id,full_name,father_name,roll_number,student_uid,profile_photo,class_id,classes(name)")
+      .eq("class_id", classId)
       .eq("status", "active")
       .order("roll_number");
-    if (classId) stQ = stQ.eq("class_id", classId);
-    const { data: studs } = await stQ;
+
     const norm = (studs ?? []).map((row: Record<string, unknown>) => {
       const cls = row.classes as { name: string } | { name: string }[] | null;
       const cn = Array.isArray(cls) ? cls[0] ?? null : cls;
-      return {
-        ...row,
-        classes: cn,
-      } as StudentRow;
+      return { ...row, classes: cn } as StudentRow;
     });
     setStudents(norm);
-    setLoading(false);
-  }, [classId, examType, examYear, supabase]);
+  }, [classId, examTypeDb, examYear, supabase]);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    void loadScheduleAndDraft();
+  }, [loadScheduleAndDraft]);
 
-  const addScheduleRow = async () => {
-    if (!newSubjectId) {
-      toast.error("Select a subject");
-      return;
-    }
-    if (!newClassScope) {
-      toast.error("Select a class for this exam row");
-      return;
-    }
-    setAdding(true);
-    const { error } = await supabase.from("exam_schedules").insert({
-      exam_type: examType,
-      exam_year: examYear,
-      class_id: newClassScope,
-      subject_id: newSubjectId,
-      exam_date: newDate,
-      start_time: `${newStart}:00`,
-      end_time: `${newEnd}:00`,
-      venue: newVenue.trim() || null,
-    });
-    setAdding(false);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    toast.success("Exam slot added");
-    void loadData();
+  const updateScheduleRow = (index: number, patch: Partial<ScheduleDraftRow>) => {
+    setScheduleRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+    setShowCardPreview(false);
   };
 
-  const cards = useMemo(() => {
-    return students.map((s) => {
-      const rows = schedules.filter((r) => !r.class_id || r.class_id === s.class_id);
-      return { student: s, rows };
-    });
-  }, [students, schedules]);
+  const saveSchedule = async () => {
+    if (!classId) {
+      toast.error("Select a class first");
+      return;
+    }
+    const missingSubjects = scheduleRows.filter((r) => !r.subjectId);
+    if (missingSubjects.length > 0) {
+      toast.error(
+        `Some subjects are not set up for this class in the database: ${missingSubjects.map((r) => r.displayName).join(", ")}. Add them under class subjects.`,
+      );
+      return;
+    }
 
-  const onGenerate = () => {
-    if (schedules.length === 0) {
-      toast.error("No exam schedule for these filters. Add rows below or adjust filters.");
+    const incomplete = incompleteSubjectLabels(scheduleRows);
+    if (incomplete.length > 0) {
+      toast.error(
+        `Every subject needs exam date, start time, end time, and venue (no blanks). Missing or incomplete: ${incomplete.join(", ")}`,
+      );
+      return;
+    }
+
+    setSavingSchedule(true);
+    const { error: delErr } = await supabase
+      .from("exam_schedules")
+      .delete()
+      .eq("class_id", classId)
+      .eq("exam_type", examTypeDb)
+      .eq("exam_year", examYear);
+
+    if (delErr) {
+      setSavingSchedule(false);
+      toast.error(delErr.message);
+      return;
+    }
+
+    let inserts: { exam_type: string; exam_year: string; class_id: string; subject_id: string; exam_date: string; start_time: string; end_time: string; venue: string }[];
+    try {
+      inserts = scheduleRows.map((r) => ({
+        exam_type: examTypeDb,
+        exam_year: examYear,
+        class_id: classId,
+        subject_id: r.subjectId!,
+        exam_date: r.exam_date.trim(),
+        start_time: toPgTime(r.start_time.trim()),
+        end_time: toPgTime(r.end_time.trim()),
+        venue: r.venue.trim(),
+      }));
+    } catch {
+      setSavingSchedule(false);
+      toast.error("Invalid start or end time on one or more rows.");
+      return;
+    }
+
+    const { error: insErr } = await supabase.from("exam_schedules").insert(inserts);
+
+    setSavingSchedule(false);
+    if (insErr) {
+      toast.error(insErr.message);
+      return;
+    }
+
+    toast.success("Schedule saved");
+    setScheduleSaved(true);
+    setShowCardPreview(false);
+    void loadScheduleAndDraft();
+  };
+
+  const onGeneratePreview = () => {
+    if (!classId) {
+      toast.error("Select a class");
+      return;
+    }
+    if (!scheduleSaved) {
+      toast.error("Save the exam schedule first");
+      return;
+    }
+    const incomplete = incompleteSubjectLabels(scheduleRows);
+    if (incomplete.length > 0) {
+      toast.error(`Complete every row (date, start, end, venue) before generating. Incomplete: ${incomplete.join(", ")}`);
       return;
     }
     if (students.length === 0) {
-      toast.error("No students for this class filter.");
+      toast.error("No active students in this class");
       return;
     }
-    setShowPreview(true);
-    toast.success("Preview ready — use Print all");
+    setShowCardPreview(true);
+    toast.success("Admit cards ready — use Print all");
   };
 
+  const orderedScheduleForCards = useMemo(() => {
+    return FIXED_SUBJECTS.map((name) => scheduleRows.find((r) => r.displayName === name)).filter(
+      (r): r is ScheduleDraftRow => r != null,
+    );
+  }, [scheduleRows]);
+
+  const cardsData = useMemo(() => {
+    return students.map((student) => ({
+      student,
+      schedule: orderedScheduleForCards,
+    }));
+  }, [students, orderedScheduleForCards]);
+
+  const missingDbSubjects = scheduleRows.filter((r) => !r.subjectId);
+
+  const scheduleFullyFilled = useMemo(() => scheduleRows.every(isScheduleRowComplete), [scheduleRows]);
+
   return (
-    <div className="space-y-8">
-      <div className="no-print surface-card grid gap-4 p-4 md:grid-cols-2 lg:grid-cols-4">
-        <div>
-          <label className="text-xs text-slate-400">Exam type</label>
-          <select
-            className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
-            value={examType}
-            onChange={(e) => setExamType(e.target.value)}
-          >
-            {EXAM_TYPES.map((e) => (
-              <option key={e} value={e}>
-                {e}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="text-xs text-slate-400">Year</label>
-          <input
-            className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
-            value={examYear}
-            onChange={(e) => setExamYear(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="text-xs text-slate-400">Class</label>
-          <select
-            className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
-            value={classId}
-            onChange={(e) => setClassId(e.target.value)}
-          >
-            <option value="">All classes</option>
-            {classes.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex items-end gap-2">
-          <Button type="button" onClick={() => void loadData()} disabled={loading}>
-            {loading ? "Loading…" : "Load data"}
-          </Button>
-        </div>
-      </div>
-
-      <div className="no-print flex flex-wrap gap-3">
-        <Button type="button" onClick={onGenerate}>
-          Generate admit cards
-        </Button>
-        <Button type="button" variant="secondary" disabled={!showPreview} onClick={() => void handlePrint()}>
-          Print all
-        </Button>
-      </div>
-
-      <div className="no-print surface-card p-4">
-        <h3 className="mb-3 font-semibold">Add exam schedule row</h3>
-        <p className="mb-3 text-sm text-slate-400">
-          Rows are stored per class and exam. Students see slots that match their class or school-wide rows (no class).
-        </p>
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+    <div className="admit-cards-page space-y-8">
+      {/* Section 1 */}
+      <section className="no-print surface-card space-y-4 p-6">
+        <h2 className="text-lg font-semibold">1. Class & exam</h2>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <div>
-            <label className="text-xs text-slate-400">Class</label>
+            <label className="text-xs font-medium text-[var(--text-muted)]">Class *</label>
             <select
-              className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
-              value={newClassScope}
+              required
+              className="mt-1 w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface-2)] px-3 py-2 text-[var(--text-primary)]"
+              value={classId}
               onChange={(e) => {
-                setNewClassScope(e.target.value);
-                setNewSubjectId("");
+                setClassId(e.target.value);
+                setShowCardPreview(false);
               }}
             >
-              <option value="">Select</option>
+              <option value="">Select class</option>
               {classes.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -338,105 +464,175 @@ export function AdmitCardsTool() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-slate-400">Subject</label>
+            <label className="text-xs font-medium text-[var(--text-muted)]">Exam type</label>
             <select
-              className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
-              value={newSubjectId}
-              onChange={(e) => setNewSubjectId(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface-2)] px-3 py-2"
+              value={examTypeLabel}
+              onChange={(e) => {
+                setExamTypeLabel(e.target.value as (typeof EXAM_TYPES)[number]);
+                setShowCardPreview(false);
+              }}
             >
-              <option value="">Select</option>
-              {subjectsPick.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
+              {EXAM_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
                 </option>
               ))}
             </select>
           </div>
           <div>
-            <label className="text-xs text-slate-400">Date</label>
+            <label className="text-xs font-medium text-[var(--text-muted)]">Exam year</label>
             <input
-              type="date"
-              className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
-              value={newDate}
-              onChange={(e) => setNewDate(e.target.value)}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-slate-400">Start</label>
-              <input
-                type="time"
-                className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
-                value={newStart}
-                onChange={(e) => setNewStart(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-400">End</label>
-              <input
-                type="time"
-                className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
-                value={newEnd}
-                onChange={(e) => setNewEnd(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="md:col-span-2">
-            <label className="text-xs text-slate-400">Venue</label>
-            <input
-              className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
-              value={newVenue}
-              onChange={(e) => setNewVenue(e.target.value)}
-              placeholder="Hall / Room"
+              className="mt-1 w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface-2)] px-3 py-2"
+              value={examYear}
+              onChange={(e) => setExamYear(e.target.value)}
             />
           </div>
         </div>
-        <Button className="mt-3" type="button" disabled={adding} onClick={() => void addScheduleRow()}>
-          {adding ? "Adding…" : "Add slot"}
-        </Button>
-      </div>
+        {loadingSchedule && classId && <p className="text-sm text-[var(--text-muted)]">Loading schedule…</p>}
+      </section>
 
-      {showPreview && (
-        <div ref={printRef}>
-          <div className="space-y-6">
-            {chunkPairs(cards).map((pair, sheetIdx) => (
-              <div
-                key={sheetIdx}
-                className="flex flex-col gap-4 rounded-xl border border-slate-600 bg-slate-900/40 p-4 print:border-slate-900 print:bg-white print:p-0"
-              >
-                <div className="admit-a4-sheet hidden print:flex">
-                  {pair.map(({ student, rows }) => (
-                    <div key={student.id} className="admit-half">
-                      <AdmitCardBody
-                        schoolName={schoolName}
-                        examType={examType}
-                        examYear={examYear}
-                        student={student}
-                        rows={rows}
-                        fmtTime={fmtTime}
+      {/* Section 2 */}
+      {classId && (
+        <section className="no-print surface-card space-y-4 p-6">
+          <h2 className="text-lg font-semibold">2. Exam schedule (per subject)</h2>
+          <p className="text-sm text-[var(--text-muted)]">
+            All seven subjects must have an <strong>exam date</strong>, <strong>start time</strong>, <strong>end time</strong>, and{" "}
+            <strong>venue</strong> — nothing is prefilled. Save is enabled only when every field is filled.
+          </p>
+          {missingDbSubjects.length > 0 && (
+            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+              Missing subject rows in database for: {missingDbSubjects.map((m) => m.displayName).join(", ")} — add matching subjects
+              for this class (e.g. Mathematics maps to Math).
+            </p>
+          )}
+          <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+            <table className="data-table min-w-[720px]">
+              <thead>
+                <tr>
+                  <th>Subject</th>
+                  <th>Exam date</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th>Venue / hall</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scheduleRows.map((row, index) => (
+                  <tr key={row.displayName}>
+                    <td className="font-medium">{row.displayName}</td>
+                    <td>
+                      <input
+                        type="date"
+                        className="w-full rounded border border-[var(--border)] bg-[var(--bg-surface)] px-2 py-1 text-sm"
+                        value={row.exam_date}
+                        onChange={(e) => updateScheduleRow(index, { exam_date: e.target.value })}
                       />
-                    </div>
-                  ))}
-                  {pair.length === 1 && <div className="admit-half hidden print:block" aria-hidden />}
-                </div>
-                <div className="print:hidden">
-                  {pair.map(({ student, rows }) => (
-                    <div key={student.id} className="mb-4 rounded-xl border border-slate-600 bg-white p-4 text-black">
-                      <AdmitCardBody
-                        schoolName={schoolName}
-                        examType={examType}
-                        examYear={examYear}
-                        student={student}
-                        rows={rows}
-                        fmtTime={fmtTime}
+                    </td>
+                    <td>
+                      <input
+                        type="time"
+                        className="w-full rounded border border-[var(--border)] bg-[var(--bg-surface)] px-2 py-1 text-sm"
+                        value={row.start_time}
+                        onChange={(e) => updateScheduleRow(index, { start_time: e.target.value })}
                       />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
+                    </td>
+                    <td>
+                      <input
+                        type="time"
+                        className="w-full rounded border border-[var(--border)] bg-[var(--bg-surface)] px-2 py-1 text-sm"
+                        value={row.end_time}
+                        onChange={(e) => updateScheduleRow(index, { end_time: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className="w-full min-w-[140px] rounded border border-[var(--border)] bg-[var(--bg-surface)] px-2 py-1 text-sm"
+                        placeholder="Required — e.g. Hall 1"
+                        value={row.venue}
+                        onChange={(e) => updateScheduleRow(index, { venue: e.target.value })}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
+          <Button
+            type="button"
+            disabled={savingSchedule || missingDbSubjects.length > 0 || !scheduleFullyFilled}
+            onClick={() => void saveSchedule()}
+          >
+            {savingSchedule ? "Saving…" : "Save schedule"}
+          </Button>
+        </section>
+      )}
+
+      {/* Section 3 */}
+      {classId && scheduleSaved && (
+        <section className="no-print surface-card space-y-4 p-6">
+          <h2 className="text-lg font-semibold">3. Students</h2>
+          <p className="text-[var(--text-secondary)]">
+            <strong>{students.length}</strong> student{students.length === 1 ? "" : "s"} found{className ? ` in ${className}` : ""}.
+          </p>
+          {loadingSchedule ? (
+            <p className="text-sm text-[var(--text-muted)]">Loading students…</p>
+          ) : (
+            <div className="flex flex-wrap gap-3">
+              {students.map((s) => (
+                <div
+                  key={s.id}
+                  className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-surface-2)] px-3 py-2 text-sm"
+                >
+                  <ProfilePhoto src={s.profile_photo} alt="" size={40} />
+                  <span>
+                    {s.roll_number} — {s.full_name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <Button type="button" disabled={!scheduleFullyFilled} onClick={onGeneratePreview}>
+            Generate &amp; preview admit cards
+          </Button>
+        </section>
+      )}
+
+      {/* Section 4 — print target */}
+      {showCardPreview && cardsData.length > 0 && (
+        <section className="space-y-4">
+          <div className="no-print flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">4. Admit cards</h2>
+            <Button type="button" variant="secondary" onClick={() => void handlePrint()}>
+              Print all
+            </Button>
+          </div>
+
+          <div ref={printRef} className="admit-print-root bg-white text-black print:bg-white">
+            {/* Screen preview */}
+            <div className="no-print space-y-6 p-4 print:hidden">
+              {cardsData.map(({ student, schedule }) => (
+                <div key={student.id} className="mx-auto max-w-md rounded-xl border border-[var(--border-strong)] bg-white p-4 shadow-sm">
+                  <AdmitCardPrint examTypeLabel={examTypeLabel} examYear={examYear} student={student} scheduleOrdered={schedule} />
+                </div>
+              ))}
+            </div>
+
+            {/* Print: 2 cards per A4 (uses global .print-only) */}
+            <div className="print-only">
+              {chunkPairs(cardsData).map((pair, sheetIdx) => (
+                <div key={sheetIdx} className="admit-a4-sheet flex flex-col gap-[4mm]">
+                  {pair.map(({ student, schedule }) => (
+                    <div key={student.id} className="admit-half min-h-0 flex-1">
+                      <AdmitCardPrint examTypeLabel={examTypeLabel} examYear={examYear} student={student} scheduleOrdered={schedule} />
+                    </div>
+                  ))}
+                  {pair.length === 1 ? <div className="admit-half flex-1 border border-dashed border-neutral-300" aria-hidden /> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
       )}
     </div>
   );

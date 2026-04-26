@@ -4,7 +4,9 @@ export default function AdmitCardsPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Admit cards</h1>
-      <p className="text-slate-400">Build exam schedules, preview cards, and print two per A4 sheet.</p>
+      <p className="text-[var(--text-muted)]">
+        Select class → enter exam dates per subject → save schedule → generate admit cards for all students → print (two per A4).
+      </p>
       <AdmitCardsTool />
     </div>
   );
