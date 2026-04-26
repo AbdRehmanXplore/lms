@@ -107,7 +107,7 @@ export function StudentTable({ students }: Props) {
             {filtered.map((s) => (
                 <tr key={s.id} className="border-t border-slate-700 hover:bg-slate-800/50">
                   <td className="p-3">
-                    <ProfilePhoto src={s.profile_photo} alt="" size={36} />
+                    <ProfilePhoto src={s.profile_photo} alt={s.full_name} name={s.full_name} size={32} />
                   </td>
                   <td className="p-3 font-mono text-sm font-bold text-blue-300">{s.student_uid ?? "—"}</td>
                   <td className="p-3">{s.roll_number}</td>

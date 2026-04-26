@@ -145,7 +145,13 @@ export function VoucherDetail({ id }: { id: string }) {
             </div>
             <p className="text-sm">{row.status === "paid" ? "Fee Receipt" : "Fee Payment Voucher"}</p>
           </div>
-          <ProfilePhoto src={st?.profile_photo} alt={st?.full_name ?? "student"} size={72} variant="card" className="border border-black" />
+          <ProfilePhoto
+            src={st?.profile_photo}
+            alt={st?.full_name ?? "student"}
+            name={st?.full_name ?? null}
+            size={72}
+            className="border border-black"
+          />
         </div>
         <div className="mt-6 space-y-2 text-sm">
           <p>

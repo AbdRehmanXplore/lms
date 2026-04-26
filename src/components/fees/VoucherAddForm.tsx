@@ -212,7 +212,7 @@ export function VoucherAddForm() {
 
         {selected && (
           <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3">
-            <ProfilePhoto src={selected.profile_photo} alt={selected.full_name} size={56} variant="card" />
+            <ProfilePhoto src={selected.profile_photo} alt={selected.full_name} name={selected.full_name} size={56} />
             <p className="text-sm text-slate-300">
               <span className="font-mono text-xs text-blue-200">{selected.student_uid ?? "—"}</span>
               <br />

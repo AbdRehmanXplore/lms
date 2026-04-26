@@ -8,6 +8,7 @@ import { calculateGrade } from "@/lib/utils/calculateGrade";
 import { Button } from "@/components/ui/Button";
 import { EXAM_TYPES, EXAM_TYPE_DB_VALUE, FIXED_SUBJECTS } from "@/lib/constants/academics";
 import { SchoolLogo } from "@/components/shared/SchoolLogo";
+import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
 
 type Subject = { id: string; name: string; max_marks: number; passing_marks: number };
 
@@ -16,6 +17,7 @@ type StudentRow = {
   father_name: string;
   roll_number: string;
   student_uid: string | null;
+  profile_photo: string | null;
   classes: { name: string } | { name: string }[] | null;
 };
 
@@ -53,7 +55,11 @@ export function StudentResultEntry({ classId, studentId, initialExamType, initia
     setError(null);
 
     const [{ data: s, error: studentError }, { data: subs, error: subjectError }, { data: res, error: resultError }] = await Promise.all([
-      supabase.from("students").select("full_name,father_name,roll_number,student_uid,classes(name)").eq("id", studentId).maybeSingle(),
+      supabase
+        .from("students")
+        .select("full_name,father_name,roll_number,student_uid,profile_photo,classes(name)")
+        .eq("id", studentId)
+        .maybeSingle(),
       supabase.from("subjects").select("id,name,max_marks,passing_marks").eq("class_id", classId),
       supabase
         .from("results")
@@ -267,9 +273,12 @@ export function StudentResultEntry({ classId, studentId, initialExamType, initia
 
       <div ref={printRef} className="print-only print-card">
         <div className="text-center">
-          <div className="mb-2 flex items-center justify-center gap-2">
-            <SchoolLogo size={36} className="rounded-md" />
-            <h2 className="text-xl font-bold">{schoolName}</h2>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <SchoolLogo size={36} className="rounded-md" />
+              <h2 className="text-xl font-bold">{schoolName}</h2>
+            </div>
+            <ProfilePhoto src={student.profile_photo} alt={student.full_name} name={student.full_name} size={64} className="border border-black" />
           </div>
           <p className="mt-1 font-semibold">STUDENT RESULT CARD</p>
           <p className="mt-1">{examTypeLabel} — {examYear}</p>

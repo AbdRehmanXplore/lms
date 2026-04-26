@@ -121,7 +121,7 @@ export function StudentDetail({ studentId }: { studentId: string }) {
         </div>
       )}
       <div className="surface-card flex flex-col gap-4 p-6 md:flex-row">
-        <ProfilePhoto src={student.profile_photo} alt="" size={96} variant="card" />
+        <ProfilePhoto src={student.profile_photo} alt={student.full_name} name={student.full_name} size={80} />
         <div className="flex-1 space-y-2">
           <h1 className="text-2xl font-semibold">{student.full_name}</h1>
           <p className="text-slate-400">

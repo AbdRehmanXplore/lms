@@ -174,7 +174,13 @@ function AdmitCardPrint({
             </div>
           </div>
         </div>
-        <ProfilePhoto src={student.profile_photo} alt="" size={56} variant="card" className="shrink-0 border border-black" />
+        <ProfilePhoto
+          src={student.profile_photo}
+          alt={student.full_name}
+          name={student.full_name}
+          size={56}
+          className="shrink-0 border border-black"
+        />
       </div>
 
       <div className="mt-2 space-y-0.5 text-[9px] leading-snug">
@@ -661,7 +667,7 @@ export function AdmitCardsTool() {
                   key={s.id}
                   className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-surface-2)] px-3 py-2 text-sm"
                 >
-                  <ProfilePhoto src={s.profile_photo} alt="" size={40} />
+                  <ProfilePhoto src={s.profile_photo} alt={s.full_name} name={s.full_name} size={40} />
                   <span>
                     {s.roll_number} — {s.full_name}
                   </span>

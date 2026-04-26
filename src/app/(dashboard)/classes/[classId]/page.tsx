@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
 
 type StudentRow = {
   id: string;
@@ -15,6 +16,7 @@ type StudentRow = {
   father_name: string;
   gender: string | null;
   status: string;
+  profile_photo: string | null;
 };
 
 export default function ClassDetailPage() {
@@ -38,7 +40,7 @@ export default function ClassDetailPage() {
         supabase.from("classes").select("name").eq("id", classId).maybeSingle(),
         supabase
           .from("students")
-          .select("id,student_uid,roll_number,full_name,father_name,gender,status")
+          .select("id,student_uid,roll_number,full_name,father_name,gender,status,profile_photo")
           .eq("class_id", classId)
           .order("roll_number"),
       ]);
@@ -120,7 +122,12 @@ export default function ClassDetailPage() {
               <tr key={s.id} className="border-t border-slate-700">
                 <td className="p-3 font-mono text-xs text-blue-300">{s.student_uid ?? "—"}</td>
                 <td className="p-3">{s.roll_number}</td>
-                <td className="p-3">{s.full_name}</td>
+                <td className="p-3">
+                  <div className="flex items-center gap-2">
+                    <ProfilePhoto src={s.profile_photo} alt={s.full_name} name={s.full_name} size={32} />
+                    <span>{s.full_name}</span>
+                  </div>
+                </td>
                 <td className="p-3">{s.father_name}</td>
                 <td className="p-3">{s.gender ?? "—"}</td>
                 <td className="p-3 capitalize">{s.status}</td>

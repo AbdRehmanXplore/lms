@@ -26,8 +26,10 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
   const supabase = useSupabaseClient();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState(defaultValues?.profilePhoto ?? "");
+  const MAX_SIZE = 500 * 1024;
+  const PHOTO_BUCKET = "school_Children_photos";
 
   const form = useForm<StudentFormValues>({
     resolver: zodResolver(studentSchema),
@@ -57,35 +59,37 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
 
   useEffect(() => {
     setPhotoPreview(defaultValues?.profilePhoto ?? "");
+    setSelectedPhotoFile(null);
   }, [defaultValues?.profilePhoto]);
 
-  const uploadPhoto = async (file: File) => {
-    setUploadingPhoto(true);
-    try {
-      const ext = file.name.split(".").pop() || "jpg";
-      const key = `${studentId ?? "new"}-${Date.now()}.${ext}`;
-      const { error: uploadError } = await supabase.storage.from("avatars").upload(key, file, {
-        upsert: true,
-        contentType: file.type,
-      });
-      if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from("avatars").getPublicUrl(key);
-      const url = data.publicUrl;
-      form.setValue("profilePhoto", url, { shouldDirty: true, shouldValidate: true });
-      setPhotoPreview(url);
-      toast.success("Photo uploaded");
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Photo upload failed";
-      toast.error(msg);
-    } finally {
-      setUploadingPhoto(false);
+  const extractStoragePath = (publicUrl: string) => {
+    const marker = `/object/public/${PHOTO_BUCKET}/`;
+    const index = publicUrl.indexOf(marker);
+    if (index === -1) return null;
+    return decodeURIComponent(publicUrl.slice(index + marker.length));
+  };
+
+  const uploadStudentPhoto = async (currentStudentId: string, file: File) => {
+    const filePath = `students/${currentStudentId}/${Date.now()}`;
+    const { error: uploadError } = await supabase.storage
+      .from(PHOTO_BUCKET)
+      .upload(filePath, file);
+    if (uploadError) {
+      throw uploadError;
     }
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(filePath);
+    return publicUrl;
   };
 
   const onSubmit = async (values: StudentFormValues) => {
     setLoading(true);
     try {
-      const photoUrl = values.profilePhoto?.trim() || null;
+      if (selectedPhotoFile && selectedPhotoFile.size > MAX_SIZE) {
+        toast.error("Photo must be under 500KB");
+        return;
+      }
 
       const payload = {
         roll_number: values.rollNumber,
@@ -99,17 +103,35 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
         phone: values.phone,
         email: values.email || null,
         admission_date: values.admissionDate || null,
-        profile_photo: photoUrl,
         status: values.status,
       };
 
       if (studentId) {
-        const { error } = await supabase.from("students").update(payload).eq("id", studentId);
+        let nextPhotoUrl = defaultValues?.profilePhoto?.trim() || null;
+        if (selectedPhotoFile) {
+          const oldPath = nextPhotoUrl ? extractStoragePath(nextPhotoUrl) : null;
+          if (oldPath) {
+            const { error: removeError } = await supabase.storage.from(PHOTO_BUCKET).remove([oldPath]);
+            if (removeError) {
+              throw removeError;
+            }
+          }
+          nextPhotoUrl = await uploadStudentPhoto(studentId, selectedPhotoFile);
+        }
+
+        const { error } = await supabase.from("students").update({ ...payload, profile_photo: nextPhotoUrl }).eq("id", studentId);
         if (error) throw error;
         toast.success("Student updated");
       } else {
-        const { error } = await supabase.from("students").insert(payload);
+        const { data: inserted, error } = await supabase.from("students").insert(payload).select("id").single();
         if (error) throw error;
+
+        const createdStudentId = inserted.id as string;
+        if (selectedPhotoFile) {
+          const publicUrl = await uploadStudentPhoto(createdStudentId, selectedPhotoFile);
+          const { error: updateError } = await supabase.from("students").update({ profile_photo: publicUrl }).eq("id", createdStudentId);
+          if (updateError) throw updateError;
+        }
         toast.success("Student created");
       }
       router.push("/students");
@@ -209,28 +231,31 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
       <div className="space-y-3 rounded-xl border border-slate-700 p-4">
         <p className="text-sm font-medium text-slate-200">Student Profile Photo</p>
         <div className="flex items-center gap-4">
-          <ProfilePhoto src={photoPreview} alt="Student" size={72} variant="card" />
+          <ProfilePhoto src={photoPreview} alt="Student" name={form.watch("fullName")} size={72} />
           <label className="cursor-pointer rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800">
-            {uploadingPhoto ? "Uploading..." : "Upload from computer"}
+            Choose photo
             <input
               type="file"
-              accept="image/*"
               className="hidden"
-              disabled={uploadingPhoto}
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
-                  void uploadPhoto(file);
+                  if (file.size > MAX_SIZE) {
+                    toast.error("Photo must be under 500KB");
+                    e.currentTarget.value = "";
+                    return;
+                  }
+                  setSelectedPhotoFile(file);
+                  setPhotoPreview(URL.createObjectURL(file));
                 }
               }}
             />
           </label>
         </div>
-        <Input label="Profile photo URL" placeholder="Auto-filled from storage upload" {...form.register("profilePhoto")} />
-        <p className="text-xs text-slate-500">Uploads to Supabase Storage bucket: avatars</p>
+        <p className="text-xs text-slate-500">Max size: 500KB. Uploads to Supabase bucket: school_Children_photos</p>
       </div>
 
-      <Button type="submit" disabled={loading || uploadingPhoto}>
+      <Button type="submit" disabled={loading}>
         {loading ? "Saving..." : "Save"}
       </Button>
     </form>

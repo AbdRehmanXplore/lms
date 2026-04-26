@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils/cn";
 type Props = {
   src: string | null | undefined;
   alt: string;
+  name?: string | null;
   size?: number;
   /** Table avatars use circle; detail headers use card (rounded rectangle). */
   variant?: "circle" | "card";
@@ -13,18 +14,19 @@ type Props = {
 };
 
 /** Renders a URL-based profile photo (any HTTPS origin). Falls back on error or empty URL. */
-export function ProfilePhoto({ src, alt, size = 40, variant = "circle", className }: Props) {
+export function ProfilePhoto({ src, alt, name, size = 40, variant = "circle", className }: Props) {
   const [failed, setFailed] = useState(false);
   const trimmed = src?.trim();
   const round = variant === "card" ? "rounded-xl" : "rounded-full";
+  const initial = name?.trim()?.charAt(0)?.toUpperCase() ?? "?";
 
   if (!trimmed || failed) {
     return (
       <div
-        className={cn("flex items-center justify-center bg-slate-700 text-xs text-slate-400", round, className)}
+        className={cn("flex items-center justify-center rounded-full bg-blue-600/80 text-sm font-semibold text-white", className)}
         style={{ width: size, height: size }}
       >
-        {variant === "card" ? "No photo" : "—"}
+        {initial}
       </div>
     );
   }
