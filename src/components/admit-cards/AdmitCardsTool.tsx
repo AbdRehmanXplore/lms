@@ -11,6 +11,10 @@ import { ORDERED_CLASSES, FIXED_SUBJECTS, EXAM_TYPES, EXAM_TYPE_DB_VALUE } from 
 
 const SCHOOL_NAME = "NEW OXFORD GRAMMER SCHOOL";
 
+/** Suggestions for venue field (same for all, or type a custom name). */
+const VENUE_PRESETS = ["Hall 1", "Hall 2", "Main Hall", "Assembly Hall", "Block A", "Block B", "Science Lab", "Computer Lab"] as const;
+const VENUE_DATALIST_ID = "admit-venue-presets";
+
 /** Map fixed display names to possible DB `subjects.name` values */
 const SUBJECT_NAME_ALIASES: Record<string, string[]> = {
   Math: ["Math", "Mathematics"],
@@ -253,6 +257,11 @@ export function AdmitCardsTool() {
   const [showCardPreview, setShowCardPreview] = useState(false);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
 
+  /** Session defaults for times & venue only (dates are per subject) */
+  const [quickStart, setQuickStart] = useState("");
+  const [quickEnd, setQuickEnd] = useState("");
+  const [quickVenue, setQuickVenue] = useState("");
+
   const className = useMemo(() => classes.find((c) => c.id === classId)?.name ?? "", [classes, classId]);
 
   useEffect(() => {
@@ -330,6 +339,23 @@ export function AdmitCardsTool() {
   const updateScheduleRow = (index: number, patch: Partial<ScheduleDraftRow>) => {
     setScheduleRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
     setShowCardPreview(false);
+  };
+
+  const applyTimesAndVenueToAll = () => {
+    if (!quickStart.trim() || !quickEnd.trim() || !quickVenue.trim()) {
+      toast.error("Set start time, end time, and venue here first, then “Apply to all”");
+      return;
+    }
+    setScheduleRows((prev) =>
+      prev.map((r) => ({
+        ...r,
+        start_time: quickStart,
+        end_time: quickEnd,
+        venue: quickVenue.trim(),
+      })),
+    );
+    setShowCardPreview(false);
+    toast.success("Times and venue applied to all 7 subjects — edit a row if one paper is different");
   };
 
   const saveSchedule = async () => {
@@ -497,9 +523,59 @@ export function AdmitCardsTool() {
         <section className="no-print surface-card space-y-4 p-6">
           <h2 className="text-lg font-semibold">2. Exam schedule (per subject)</h2>
           <p className="text-sm text-[var(--text-muted)]">
-            All seven subjects must have an <strong>exam date</strong>, <strong>start time</strong>, <strong>end time</strong>, and{" "}
-            <strong>venue</strong> — nothing is prefilled. Save is enabled only when every field is filled.
+            All seven subjects must have an <strong>exam date</strong> (per paper), <strong>start time</strong>,{" "}
+            <strong>end time</strong>, and <strong>venue</strong>. If times and venue are the same for every paper, use quick fill
+            below, then set each date in the table. Save is enabled when every field is filled.
           </p>
+
+          <div className="space-y-4 rounded-lg border border-[var(--border)] bg-[var(--bg-surface-2)] p-4">
+            <p className="text-sm font-medium text-[var(--text-primary)]">Quick fill — time &amp; venue only (optional)</p>
+            <p className="text-xs text-[var(--text-muted)]">
+              Exam days are usually different per subject — enter each date in the table. Use this when start/end time and hall are the
+              same for all papers, then adjust any row that differs.
+            </p>
+            <datalist id={VENUE_DATALIST_ID}>
+              {VENUE_PRESETS.map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <div>
+                <label className="text-xs text-[var(--text-muted)]">Start (all papers)</label>
+                <input
+                  type="time"
+                  className="mt-1 w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 py-2 text-sm"
+                  value={quickStart}
+                  onChange={(e) => setQuickStart(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[var(--text-muted)]">End (all papers)</label>
+                <input
+                  type="time"
+                  className="mt-1 w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 py-2 text-sm"
+                  value={quickEnd}
+                  onChange={(e) => setQuickEnd(e.target.value)}
+                />
+              </div>
+              <div className="sm:col-span-2 lg:col-span-2">
+                <label className="text-xs text-[var(--text-muted)]">Venue (choose or type)</label>
+                <input
+                  className="mt-1 w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 py-2 text-sm"
+                  list={VENUE_DATALIST_ID}
+                  placeholder="e.g. Hall 1 or pick from list"
+                  value={quickVenue}
+                  onChange={(e) => setQuickVenue(e.target.value)}
+                />
+              </div>
+              <div className="flex items-end">
+                <Button type="button" className="w-full" variant="secondary" onClick={applyTimesAndVenueToAll}>
+                  Apply time &amp; venue to all
+                </Button>
+              </div>
+            </div>
+          </div>
+
           {missingDbSubjects.length > 0 && (
             <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
               Missing subject rows in database for: {missingDbSubjects.map((m) => m.displayName).join(", ")} — add matching subjects
@@ -548,7 +624,8 @@ export function AdmitCardsTool() {
                     <td>
                       <input
                         className="w-full min-w-[140px] rounded border border-[var(--border)] bg-[var(--bg-surface)] px-2 py-1 text-sm"
-                        placeholder="Required — e.g. Hall 1"
+                        list={VENUE_DATALIST_ID}
+                        placeholder="Required — same or different per row"
                         value={row.venue}
                         onChange={(e) => updateScheduleRow(index, { venue: e.target.value })}
                       />
