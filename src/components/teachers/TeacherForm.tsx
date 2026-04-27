@@ -88,6 +88,7 @@ export function TeacherForm({ classes, teacherId, defaultValues, suggestedEmploy
       }
 
       const payload = {
+        name: values.fullName,
         full_name: values.fullName,
         employee_code: values.employeeCode,
         email: values.email,

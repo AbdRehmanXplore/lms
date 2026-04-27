@@ -791,7 +791,10 @@ Make sure ALL of these are true before considering the project done:
 - [x] Results module fetching optimized (class grid + class result sheets + generated results with parallel queries and map-based lookups)
 - [x] Class order updated to: Play Group → Montessory → Junior → Senior → Class 1 ... Class 10
 - [x] Class list fetches updated to use `order('sort_order')` for selectors and class-driven pages
-- [x] SQL scripts added for new tables/config (`supabase/school_settings.sql`) and class order reset/sort (`supabase/classes_sort_order.sql`)
+- [x] SQL scripts added for new tables/config (`supabase/school_settings.sql`), class sort order (`supabase/classes_sort_order.sql`), and teacher `name` column sync (`supabase/teachers_name_column.sql`)
+- [x] FK-safe guidance added for class sort update in production DBs (avoid `DELETE FROM classes` when referenced by results/fees/students)
+- [x] Sidebar behavior improved: stays fixed/sticky while content scrolls
+- [x] Day-mode form readability improved globally (removed harsh black form blocks; standardized text/placeholder/autofill/select colors)
 - [x] Build verification completed after each major change (`npm run build` successful)
 
 ### UI & UX
