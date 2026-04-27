@@ -83,6 +83,27 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
     return publicUrl;
   };
 
+  const getNextStudentUid = async () => {
+    const { data, error } = await supabase
+      .from("students")
+      .select("student_uid")
+      .ilike("student_uid", "nogs-%");
+    if (error) {
+      throw error;
+    }
+
+    const maxSeq = (data ?? []).reduce((max, row) => {
+      const uid = row.student_uid?.toLowerCase() ?? "";
+      const match = /^nogs-(\d+)$/.exec(uid);
+      if (!match) return max;
+      const n = Number(match[1]);
+      return Number.isFinite(n) ? Math.max(max, n) : max;
+    }, 0);
+
+    const next = maxSeq + 1;
+    return `nogs-${String(next).padStart(2, "0")}`;
+  };
+
   const onSubmit = async (values: StudentFormValues) => {
     setLoading(true);
     try {
@@ -123,7 +144,12 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
         if (error) throw error;
         toast.success("Student updated");
       } else {
-        const { data: inserted, error } = await supabase.from("students").insert(payload).select("id").single();
+        const nextStudentUid = await getNextStudentUid();
+        const { data: inserted, error } = await supabase
+          .from("students")
+          .insert({ ...payload, student_uid: nextStudentUid })
+          .select("id")
+          .single();
         if (error) throw error;
 
         const createdStudentId = inserted.id as string;
