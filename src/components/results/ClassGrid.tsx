@@ -22,7 +22,7 @@ export function ClassGrid() {
     const load = async () => {
       setLoading(true);
       setError(null);
-      const { data: classes, error: classError } = await supabase.from("classes").select("id,name");
+      const { data: classes, error: classError } = await supabase.from("classes").select("id,name").order("sort_order");
       if (classError) {
         setError(classError.message);
         setLoading(false);
@@ -34,36 +34,13 @@ export function ClassGrid() {
         return;
       }
 
-      const out: ClassTile[] = [];
-      for (const className of ORDERED_CLASSES) {
-        const cls = classes.find((c) => c.name === className);
-        if (!cls) {
-          out.push({ id: null, name: className, generatedResults: 0, studentCount: 0 });
-          continue;
-        }
-
-        // Query student count
-        const { data: students, error: studentError } = await supabase
-          .from("students")
-          .select("id", { count: "exact" })
-          .eq("class_id", cls.id)
-          .eq("status", "active");
-
-        if (studentError) {
-          setError(studentError.message);
-          setLoading(false);
-          return;
-        }
-
-        const { data: results, error: resultError } = await supabase
-          .from("results")
-          .select("student_id,exam_type,exam_year,subject_id")
-          .eq("class_id", cls.id);
-        if (resultError) {
-          setError(resultError.message);
-          setLoading(false);
-          return;
-        }
+      const classJobs = (classes ?? []).map(async (cls) => {
+        const [{ count: studentCount, error: studentError }, { data: results, error: resultError }] = await Promise.all([
+          supabase.from("students").select("id", { count: "exact", head: true }).eq("class_id", cls.id).eq("status", "active"),
+          supabase.from("results").select("student_id,exam_type,exam_year,subject_id").eq("class_id", cls.id),
+        ]);
+        if (studentError) throw new Error(studentError.message);
+        if (resultError) throw new Error(resultError.message);
 
         const grouped = new Map<string, Set<string>>();
         (results ?? []).forEach((row) => {
@@ -71,19 +48,36 @@ export function ClassGrid() {
           if (!grouped.has(key)) grouped.set(key, new Set());
           grouped.get(key)?.add(row.subject_id as string);
         });
-        const completed = [...grouped.values()].filter((subjects) => subjects.size >= FIXED_SUBJECTS.length).length;
 
-        out.push({ 
-          id: cls.id, 
-          name: cls.name, 
-          generatedResults: completed,
-          studentCount: students?.length ?? 0,
-        });
-      }
+        return {
+          classId: cls.id as string,
+          studentCount: studentCount ?? 0,
+          generatedResults: [...grouped.values()].filter((subjects) => subjects.size >= FIXED_SUBJECTS.length).length,
+        };
+      });
+
+      const classStats = await Promise.all(classJobs);
+      const classMap = new Map((classes ?? []).map((c) => [c.name, c]));
+      const statsMap = new Map(classStats.map((s) => [s.classId, s]));
+
+      const out: ClassTile[] = ORDERED_CLASSES.map((className) => {
+        const cls = classMap.get(className);
+        if (!cls) return { id: null, name: className, generatedResults: 0, studentCount: 0 };
+        const stats = statsMap.get(cls.id);
+        return {
+          id: cls.id,
+          name: cls.name,
+          generatedResults: stats?.generatedResults ?? 0,
+          studentCount: stats?.studentCount ?? 0,
+        };
+      });
       setTiles(out);
       setLoading(false);
     };
-    void load();
+    void load().catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : "Failed to load classes");
+      setLoading(false);
+    });
   }, [supabase]);
 
   if (loading) {

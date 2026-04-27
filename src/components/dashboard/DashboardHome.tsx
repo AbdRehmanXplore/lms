@@ -125,50 +125,85 @@ export function DashboardHome() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ count: studentCount }, { count: teacherCount }] = await Promise.all([
-        supabase.from("students").select("*", { count: "exact", head: true }).eq("status", "active"),
-        supabase.from("teachers").select("*", { count: "exact", head: true }).eq("status", "active"),
+      const [
+        { count: studentCount },
+        { count: teacherCount },
+        { count: newStudents },
+        { data: paidToday },
+        { data: unpaidRows },
+        { count: pendingFeesCount },
+        { data: expMonth },
+      ] = await Promise.all([
+        supabase.from("students").select("id", { count: "exact", head: true }).eq("status", "active"),
+        supabase.from("teachers").select("id", { count: "exact", head: true }).eq("status", "active"),
+        supabase
+          .from("students")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "active")
+          .gte("created_at", monthStart),
+        supabase.from("fee_vouchers").select("amount").eq("status", "paid").eq("payment_date", today),
+        supabase.from("fee_vouchers").select("amount,student_id").in("status", ["unpaid", "overdue"]),
+        supabase
+          .from("fee_vouchers")
+          .select("id", { count: "exact", head: true })
+          .in("status", ["unpaid", "overdue"]),
+        supabase.from("expenses").select("amount").gte("expense_date", monthStart).lte("expense_date", monthEnd),
       ]);
-
-      const { count: newStudents } = await supabase
-        .from("students")
-        .select("*", { count: "exact", head: true })
-        .eq("status", "active")
-        .gte("created_at", monthStart);
-
-      const { data: paidToday } = await supabase
-        .from("fee_vouchers")
-        .select("amount")
-        .eq("status", "paid")
-        .eq("payment_date", today);
       const feeToday = (paidToday ?? []).reduce((a, r) => a + Number(r.amount), 0);
-
-      const { data: unpaidRows } = await supabase
-        .from("fee_vouchers")
-        .select("amount,student_id")
-        .in("status", ["unpaid", "overdue"]);
       const unpaidTotal = (unpaidRows ?? []).reduce((a, r) => a + Number(r.amount), 0);
       const unpaidSet = new Set((unpaidRows ?? []).map((r) => r.student_id).filter(Boolean));
       const unpaidStudents = unpaidSet.size;
-
-      const { count: pendingFeesCount } = await supabase
-        .from("fee_vouchers")
-        .select("*", { count: "exact", head: true })
-        .in("status", ["unpaid", "overdue"]);
-
-      const { data: expMonth } = await supabase
-        .from("expenses")
-        .select("amount")
-        .gte("expense_date", monthStart)
-        .lte("expense_date", monthEnd);
       const expensesMonth = (expMonth ?? []).reduce((a, r) => a + Number(r.amount), 0);
 
-      const { data: attToday } = await supabase.from("attendance").select("status").eq("date", today);
+      const [
+        { data: attToday },
+        { data: taToday },
+        salRes,
+        { data: byClass },
+        { data: attRows },
+        { data: fvClass },
+        { data: rf10 },
+        { data: rs },
+        { data: rf },
+        { data: tsal },
+        { data: res },
+      ] = await Promise.all([
+        supabase.from("attendance").select("status").eq("date", today),
+        supabase.from("teacher_attendance").select("status").eq("date", today),
+        supabase
+          .from("teacher_salaries")
+          .select("id,due_date,salary_amount,teachers(full_name)")
+          .eq("month_year", ym)
+          .eq("status", "unpaid"),
+        supabase.from("students").select("class_id, classes(name)").eq("status", "active").limit(300),
+        supabase.from("attendance").select("date,status").gte("date", new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)),
+        supabase.from("fee_vouchers").select("amount, status, students(classes(name))").limit(1000),
+        supabase
+          .from("fee_vouchers")
+          .select("id,amount,payment_date,status,students(full_name,classes(name))")
+          .eq("status", "paid")
+          .order("payment_date", { ascending: false, nullsFirst: false })
+          .limit(10),
+        supabase.from("students").select("id,full_name,created_at").order("created_at", { ascending: false }).limit(4),
+        supabase
+          .from("fee_vouchers")
+          .select("id,month,amount,payment_date,status")
+          .eq("status", "paid")
+          .order("payment_date", { ascending: false, nullsFirst: false })
+          .limit(4),
+        supabase
+          .from("teacher_salaries")
+          .select("id,month_year,salary_amount,paid_date")
+          .eq("status", "paid")
+          .order("paid_date", { ascending: false, nullsFirst: false })
+          .limit(3),
+        supabase.from("results").select("id,created_at").order("created_at", { ascending: false }).limit(3),
+      ]);
+
       const rows = attToday ?? [];
       const present = rows.filter((r) => r.status === "present" || r.status === "late").length;
       const studentAtt = rows.length ? Math.round((present / rows.length) * 100) : 0;
 
-      const { data: taToday } = await supabase.from("teacher_attendance").select("status").eq("date", today);
       const trows = taToday ?? [];
       const tPresent = trows.filter((r) => r.status === "present" || r.status === "late").length;
       const teacherAtt = trows.length ? Math.round((tPresent / trows.length) * 100) : 0;
@@ -177,11 +212,6 @@ export function DashboardHome() {
       let salaryDue = 0;
       let salaryDueTeachers = 0;
       let salList: SalaryDueRow[] = [];
-      const salRes = await supabase
-        .from("teacher_salaries")
-        .select("id,due_date,salary_amount,teachers(full_name)")
-        .eq("month_year", ym)
-        .eq("status", "unpaid");
       if (!salRes.error && salRes.data) {
         salList = (salRes.data as SalaryDueRow[]).map((row) => ({
           ...row,
@@ -191,31 +221,30 @@ export function DashboardHome() {
         salaryDueTeachers = salList.length;
       }
 
-      const months: { month: string; fees: number; expenses: number }[] = [];
-      for (let i = 5; i >= 0; i--) {
+      const monthJobs: Promise<{ month: string; fees: number; expenses: number }>[] = [];
+      for (let i = 0; i <= 5; i += 1) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
         const end = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
-        const [{ data: vouchers }, { data: exps }] = await Promise.all([
-          supabase
-            .from("fee_vouchers")
-            .select("amount, payment_date, status")
-            .eq("status", "paid")
-            .gte("payment_date", start)
-            .lte("payment_date", end),
-          supabase.from("expenses").select("amount").gte("expense_date", start).lte("expense_date", end),
-        ]);
-        const fees = (vouchers ?? []).reduce((a, r) => a + Number(r.amount), 0);
-        const expenses = (exps ?? []).reduce((a, r) => a + Number(r.amount), 0);
-        months.push({
-          month: d.toLocaleString("en", { month: "short" }),
-          fees,
-          expenses,
-        });
+        monthJobs.push(
+          Promise.all([
+            supabase
+              .from("fee_vouchers")
+              .select("amount, payment_date, status")
+              .eq("status", "paid")
+              .gte("payment_date", start)
+              .lte("payment_date", end),
+            supabase.from("expenses").select("amount").gte("expense_date", start).lte("expense_date", end),
+          ]).then(([{ data: vouchers }, { data: exps }]) => ({
+            month: d.toLocaleString("en", { month: "short" }),
+            fees: (vouchers ?? []).reduce((a, r) => a + Number(r.amount), 0),
+            expenses: (exps ?? []).reduce((a, r) => a + Number(r.amount), 0),
+          })),
+        );
       }
-      setFeeExpenseMonths(months);
+      const months = await Promise.all(monthJobs);
+      setFeeExpenseMonths(months.reverse());
 
-      const { data: byClass } = await supabase.from("students").select("class_id, classes(name)").eq("status", "active");
       const map = new Map<string, number>();
       (byClass ?? []).forEach((row: { classes: { name: string } | { name: string }[] | null }) => {
         const c = row.classes;
@@ -227,10 +256,6 @@ export function DashboardHome() {
         map.size > 0 ? [...map.entries()].map(([name, value]) => ({ name, value })) : [{ name: "No data", value: 1 }],
       );
 
-      const start30 = new Date();
-      start30.setDate(start30.getDate() - 29);
-      const startStr = start30.toISOString().slice(0, 10);
-      const { data: attRows } = await supabase.from("attendance").select("date,status").gte("date", startStr);
       const dayMap = new Map<string, { p: number; t: number }>();
       (attRows ?? []).forEach((r) => {
         const cur = dayMap.get(r.date) ?? { p: 0, t: 0 };
@@ -251,9 +276,6 @@ export function DashboardHome() {
       }
       setAtt30(trend);
 
-      const { data: fvClass } = await supabase
-        .from("fee_vouchers")
-        .select("amount, status, students(classes(name))");
       const feeMap = new Map<string, { paid: number; pending: number }>();
       (fvClass ?? []).forEach((row: Record<string, unknown>) => {
         const st = row.students as { classes?: { name: string } | { name: string }[] } | null;
@@ -276,23 +298,6 @@ export function DashboardHome() {
       setFeeByClass(feeBars);
 
       setSalaryDueList(salList.slice(0, 6));
-
-      const [{ data: rs }, { data: rf }, { data: tsal }, { data: res }] = await Promise.all([
-        supabase.from("students").select("id,full_name,created_at").order("created_at", { ascending: false }).limit(4),
-        supabase
-          .from("fee_vouchers")
-          .select("id,month,amount,payment_date,status")
-          .eq("status", "paid")
-          .order("payment_date", { ascending: false, nullsFirst: false })
-          .limit(4),
-        supabase
-          .from("teacher_salaries")
-          .select("id,month_year,salary_amount,paid_date")
-          .eq("status", "paid")
-          .order("paid_date", { ascending: false, nullsFirst: false })
-          .limit(3),
-        supabase.from("results").select("id,created_at").order("created_at", { ascending: false }).limit(3),
-      ]);
 
       const acts: ActivityItem[] = [];
       (rs ?? []).forEach((r: { id: string; full_name: string; created_at: string }) =>
@@ -335,12 +340,6 @@ export function DashboardHome() {
       acts.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
       setActivities(acts.slice(0, 8));
 
-      const { data: rf10 } = await supabase
-        .from("fee_vouchers")
-        .select("id,amount,payment_date,status,students(full_name,classes(name))")
-        .eq("status", "paid")
-        .order("payment_date", { ascending: false, nullsFirst: false })
-        .limit(10);
       setRecentFees(
         ((rf10 ?? []) as RecentFeeRow[]).map((row) => ({
           ...row,

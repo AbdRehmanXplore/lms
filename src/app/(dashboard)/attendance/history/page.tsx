@@ -15,7 +15,7 @@ export default function AttendanceHistoryPage() {
     void supabase
       .from("classes")
       .select("id,name")
-      .order("name")
+      .order("sort_order")
       .then(({ data }) => setClasses(data ?? []));
   }, [supabase]);
 

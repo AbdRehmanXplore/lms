@@ -70,7 +70,7 @@ export function TeacherDetail({ teacherId }: { teacherId: string }) {
       .eq("teacher_id", teacherId)
       .order("paid_at", { ascending: false });
     setSalaryRows((h as SalaryRow[]) ?? []);
-    const { data: c } = await supabase.from("classes").select("id,name").order("name");
+    const { data: c } = await supabase.from("classes").select("id,name").order("sort_order");
     setClasses(c ?? []);
     setLoading(false);
   };

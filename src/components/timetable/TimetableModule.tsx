@@ -54,7 +54,7 @@ export function TimetableModule() {
   const schoolName = process.env.NEXT_PUBLIC_SCHOOL_NAME ?? "NEW OXFORD GRAMMER SCHOOL";
 
   const loadOverview = useCallback(async () => {
-    const { data: cls } = await supabase.from("classes").select("id,name").order("name");
+    const { data: cls } = await supabase.from("classes").select("id,name").order("sort_order");
     const list = cls ?? [];
     const stats: { id: string; name: string; filled: number }[] = [];
     for (const c of list) {
@@ -100,7 +100,7 @@ export function TimetableModule() {
     void supabase
       .from("classes")
       .select("id,name")
-      .order("name")
+      .order("sort_order")
       .then(({ data }) => setClasses(data ?? []));
   }, [supabase]);
 

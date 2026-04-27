@@ -8,8 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
 import { SchoolLogo } from "@/components/shared/SchoolLogo";
 import { ORDERED_CLASSES, FIXED_SUBJECTS, EXAM_TYPES, EXAM_TYPE_DB_VALUE } from "@/lib/constants/academics";
-
-const SCHOOL_NAME = "NEW OXFORD GRAMMER SCHOOL";
+import { useSchoolBranding } from "@/components/providers/SchoolBrandingProvider";
 
 /** Suggestions for venue field (same for all, or type a custom name). */
 const VENUE_PRESETS = ["Hall 1", "Hall 2", "Main Hall", "Assembly Hall", "Block A", "Block B", "Science Lab", "Computer Lab"] as const;
@@ -152,11 +151,15 @@ function AdmitCardPrint({
   examYear,
   student,
   scheduleOrdered,
+  schoolName,
+  logoUrl,
 }: {
   examTypeLabel: string;
   examYear: string;
   student: StudentRow;
   scheduleOrdered: ScheduleDraftRow[];
+  schoolName: string;
+  logoUrl: string | null;
 }) {
   const clsName = student.classes?.name ?? "—";
   return (
@@ -164,9 +167,9 @@ function AdmitCardPrint({
       <div className="flex items-start justify-between border-b border-black pb-2">
         <div className="min-w-0 flex-1 pr-2">
           <div className="flex items-center gap-2">
-            <SchoolLogo size={36} className="shrink-0 rounded-md" />
+            <SchoolLogo size={36} className="shrink-0 rounded-md" logoUrl={logoUrl} />
             <div>
-              <p className="text-[11px] font-bold leading-tight">{SCHOOL_NAME}</p>
+              <p className="text-[11px] font-bold leading-tight">{schoolName}</p>
               <p className="text-[9px] font-semibold uppercase tracking-wide">Examination Admit Card</p>
               <p className="text-[9px] text-neutral-700">
                 {examTypeLabel} — {examYear}
@@ -244,6 +247,7 @@ function AdmitCardPrint({
 
 export function AdmitCardsTool() {
   const supabase = useSupabaseClient();
+  const { schoolName, logoUrl } = useSchoolBranding();
   const printRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ contentRef: printRef });
 
@@ -274,6 +278,7 @@ export function AdmitCardsTool() {
     void supabase
       .from("classes")
       .select("id,name")
+      .order("sort_order")
       .then(({ data }) => {
         const list = data ?? [];
         const order = new Map(ORDERED_CLASSES.map((n, i) => [n, i]));
@@ -696,7 +701,14 @@ export function AdmitCardsTool() {
             <div className="no-print space-y-6 p-4 print:hidden">
               {cardsData.map(({ student, schedule }) => (
                 <div key={student.id} className="mx-auto max-w-md rounded-xl border border-[var(--border-strong)] bg-white p-4 shadow-sm">
-                  <AdmitCardPrint examTypeLabel={examTypeLabel} examYear={examYear} student={student} scheduleOrdered={schedule} />
+                  <AdmitCardPrint
+                    examTypeLabel={examTypeLabel}
+                    examYear={examYear}
+                    student={student}
+                    scheduleOrdered={schedule}
+                    schoolName={schoolName}
+                    logoUrl={logoUrl}
+                  />
                 </div>
               ))}
             </div>
@@ -707,7 +719,14 @@ export function AdmitCardsTool() {
                 <div key={sheetIdx} className="admit-a4-sheet flex flex-col gap-[4mm]">
                   {pair.map(({ student, schedule }) => (
                     <div key={student.id} className="admit-half min-h-0 flex-1">
-                      <AdmitCardPrint examTypeLabel={examTypeLabel} examYear={examYear} student={student} scheduleOrdered={schedule} />
+                      <AdmitCardPrint
+                        examTypeLabel={examTypeLabel}
+                        examYear={examYear}
+                        student={student}
+                        scheduleOrdered={schedule}
+                        schoolName={schoolName}
+                        logoUrl={logoUrl}
+                      />
                     </div>
                   ))}
                   {pair.length === 1 ? <div className="admit-half flex-1 border border-dashed border-neutral-300" aria-hidden /> : null}

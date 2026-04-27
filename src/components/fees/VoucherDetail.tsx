@@ -9,6 +9,7 @@ import { formatCurrency } from "@/lib/utils/formatCurrency";
 import { Button } from "@/components/ui/Button";
 import { SchoolLogo } from "@/components/shared/SchoolLogo";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
+import { useSchoolBranding } from "@/components/providers/SchoolBrandingProvider";
 
 type Row = {
   id: string;
@@ -38,7 +39,7 @@ export function VoucherDetail({ id }: { id: string }) {
   const [row, setRow] = useState<Row | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ contentRef: printRef });
-  const schoolName = process.env.NEXT_PUBLIC_SCHOOL_NAME ?? "NEW OXFORD GRAMMER SCHOOL";
+  const { schoolName, logoUrl } = useSchoolBranding();
 
   useEffect(() => {
     void supabase
@@ -140,7 +141,7 @@ export function VoucherDetail({ id }: { id: string }) {
         <div className="flex items-start justify-between border-b border-black pb-3">
           <div>
             <div className="flex items-center gap-2">
-              <SchoolLogo size={32} className="rounded-md" />
+              <SchoolLogo size={32} className="rounded-md" logoUrl={logoUrl} />
               <h1 className="text-lg font-bold">{schoolName}</h1>
             </div>
             <p className="text-sm">{row.status === "paid" ? "Fee Receipt" : "Fee Payment Voucher"}</p>

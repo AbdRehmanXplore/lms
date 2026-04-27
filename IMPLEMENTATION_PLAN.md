@@ -106,7 +106,7 @@ create table if not exists teachers (
   created_at timestamptz default now()
 );
 
--- Classes (13 classes)
+-- Classes (14 classes)
 create table if not exists classes (
   id uuid primary key default uuid_generate_v4(),
   name text unique not null,
@@ -115,11 +115,12 @@ create table if not exists classes (
   created_at timestamptz default now()
 );
 
--- Insert all 13 classes
+-- Insert all 14 classes
 insert into classes (name, section) values
   ('Play Group', 'A'),
-  ('Junior', 'A'),
   ('Montessory', 'A'),
+  ('Junior', 'A'),
+  ('Senior', 'A'),
   ('Class 1', 'A'),
   ('Class 2', 'A'),
   ('Class 3', 'A'),
@@ -771,12 +772,27 @@ Make sure ALL of these are true before considering the project done:
 ### Data & Database
 - [x] Every form saves real data to Supabase (no mock/dummy data)
 - [x] Every list page fetches real data from Supabase
-- [x] Student UID (SMS-YYYY-XXXX) auto-generates on every new student
+- [x] Student UID now uses `nogs-XX` sequence for new inserts (DB trigger needs to match this format)
 - [x] Profile photos upload to Supabase Storage and URL saves to DB
 - [x] Fee status updates on refresh after actions (in-app state updates; full instant without refresh depends on path)
 - [x] Results UPDATE existing record when editing (not create duplicate) — *verify per edge case in DB*
-- [x] All 13 classes appear in class-driven flows
+- [x] All 14 classes appear in class-driven flows
 - [x] All 7 subjects on result entry / print
+
+### Session Progress Update (Completed)
+- [x] Student photo upload implemented on add/edit with preview, 500KB limit, storage upload, old-photo delete on replace, and DB URL update
+- [x] Student photo display implemented in students list, student detail header, class detail rows, fee voucher views, admit cards, and result print card
+- [x] Fallback avatar unified to initials-in-circle (prevents broken image icons)
+- [x] Teacher photo upload implemented on add/edit with preview, 500KB limit, storage upload, old-photo delete on replace, and DB URL update
+- [x] Storage integration switched to bucket id `school_Children_photos` (case-sensitive match)
+- [x] School branding settings implemented (`school_settings` table usage, school name + logo upload, dynamic branding in sidebar/login/prints)
+- [x] Sidebar school logo/name now links to dashboard and settings page includes a logout option
+- [x] Dashboard data fetching optimized (parallelized major fetch groups and reduced sequential waits)
+- [x] Results module fetching optimized (class grid + class result sheets + generated results with parallel queries and map-based lookups)
+- [x] Class order updated to: Play Group → Montessory → Junior → Senior → Class 1 ... Class 10
+- [x] Class list fetches updated to use `order('sort_order')` for selectors and class-driven pages
+- [x] SQL scripts added for new tables/config (`supabase/school_settings.sql`) and class order reset/sort (`supabase/classes_sort_order.sql`)
+- [x] Build verification completed after each major change (`npm run build` successful)
 
 ### UI & UX
 - [ ] Loading **skeletons** (most screens use "Loading…" text)
@@ -815,7 +831,7 @@ Build in this exact order:
 3. Login page with school branding
 4. Dashboard layout (sidebar + header)
 5. Dashboard page (stats + charts + search)
-6. Classes module (13 classes + student list)
+6. Classes module (14 classes + student list)
 7. Students module (CRUD + photo upload + Student UID)
 8. Teachers module (CRUD + photo upload)
 9. Results module (two sections + print)

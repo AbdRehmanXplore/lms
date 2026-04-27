@@ -39,25 +39,32 @@ export function ResultSheet({ classId, className }: Props) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data: subs } = await supabase.from("subjects").select("id,name,max_marks").eq("class_id", classId);
-    const { data: studs } = await supabase
-      .from("students")
-      .select("id,roll_number,full_name,father_name,student_uid")
-      .eq("class_id", classId)
-      .order("roll_number");
-    const { data: res } = await supabase
-      .from("results")
-      .select("student_id,subject_id,marks_obtained,max_marks")
-      .eq("class_id", classId)
-      .eq("exam_type", examType)
-      .eq("exam_year", examYear);
+    const [{ data: subs }, { data: studs }, { data: res }] = await Promise.all([
+      supabase.from("subjects").select("id,name,max_marks").eq("class_id", classId),
+      supabase
+        .from("students")
+        .select("id,roll_number,full_name,father_name,student_uid")
+        .eq("class_id", classId)
+        .order("roll_number")
+        .limit(100),
+      supabase
+        .from("results")
+        .select("student_id,subject_id,marks_obtained")
+        .eq("class_id", classId)
+        .eq("exam_type", examType)
+        .eq("exam_year", examYear),
+    ]);
 
     const next: Record<string, Record<string, string>> = {};
+    const marksMap = new Map<string, number>();
+    (res ?? []).forEach((r) => {
+      marksMap.set(`${r.student_id}|${r.subject_id}`, Number(r.marks_obtained));
+    });
     (studs ?? []).forEach((s) => {
       next[s.id] = {};
       (subs ?? []).forEach((sub) => {
-        const row = (res ?? []).find((r) => r.student_id === s.id && r.subject_id === sub.id);
-        next[s.id][sub.id] = row?.marks_obtained != null ? String(row.marks_obtained) : "";
+        const marks = marksMap.get(`${s.id}|${sub.id}`);
+        next[s.id][sub.id] = marks != null ? String(marks) : "";
       });
     });
 

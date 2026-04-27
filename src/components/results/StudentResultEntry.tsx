@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { EXAM_TYPES, EXAM_TYPE_DB_VALUE, FIXED_SUBJECTS } from "@/lib/constants/academics";
 import { SchoolLogo } from "@/components/shared/SchoolLogo";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
+import { useSchoolBranding } from "@/components/providers/SchoolBrandingProvider";
 
 type Subject = { id: string; name: string; max_marks: number; passing_marks: number };
 
@@ -47,8 +48,7 @@ export function StudentResultEntry({ classId, studentId, initialExamType, initia
   const [error, setError] = useState<string | null>(null);
 
   const examType = EXAM_TYPE_DB_VALUE[examTypeLabel];
-
-  const schoolName = process.env.NEXT_PUBLIC_SCHOOL_NAME ?? "NEW OXFORD GRAMMER SCHOOL";
+  const { schoolName, logoUrl } = useSchoolBranding();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -275,7 +275,7 @@ export function StudentResultEntry({ classId, studentId, initialExamType, initia
         <div className="text-center">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <SchoolLogo size={36} className="rounded-md" />
+              <SchoolLogo size={36} className="rounded-md" logoUrl={logoUrl} />
               <h2 className="text-xl font-bold">{schoolName}</h2>
             </div>
             <ProfilePhoto src={student.profile_photo} alt={student.full_name} name={student.full_name} size={64} className="border border-black" />

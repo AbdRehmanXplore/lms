@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -12,6 +12,21 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [schoolName, setSchoolName] = useState("NEW OXFORD GRAMMER SCHOOL");
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    void supabase
+      .from("school_settings")
+      .select("school_name,logo_url,updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        setSchoolName(data?.school_name?.trim() || "NEW OXFORD GRAMMER SCHOOL");
+        setLogoUrl(data?.logo_url?.trim() || null);
+      });
+  }, [supabase]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,8 +44,8 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 p-6">
       <form onSubmit={onSubmit} className="surface-card w-full max-w-md space-y-4 border border-blue-500/30 p-6">
         <div className="mb-2 flex flex-col items-center text-center">
-          <SchoolLogo size={100} />
-          <h1 className="mt-3 text-xl font-bold tracking-wide">NEW OXFORD GRAMMER SCHOOL</h1>
+          <SchoolLogo size={100} logoUrl={logoUrl} />
+          <h1 className="mt-3 text-xl font-bold tracking-wide">{schoolName}</h1>
           <p className="text-sm text-slate-400">School Management System</p>
         </div>
         <input

@@ -50,7 +50,7 @@ export function StudentDetail({ studentId }: { studentId: string }) {
   const load = async () => {
     const { data: s } = await supabase.from("students").select("*").eq("id", studentId).maybeSingle();
     setStudent((s as Student) ?? null);
-    const { data: c } = await supabase.from("classes").select("id,name").order("name");
+    const { data: c } = await supabase.from("classes").select("id,name").order("sort_order");
     setClasses(c ?? []);
     const { data: v } = await supabase
       .from("fee_vouchers")

@@ -22,6 +22,7 @@ import {
 import clsx from "clsx";
 import { UserMenu } from "./UserMenu";
 import { SchoolLogo } from "@/components/shared/SchoolLogo";
+import { useSchoolBranding } from "@/components/providers/SchoolBrandingProvider";
 
 type Item = { href: string; label: string; icon: React.ComponentType<{ size?: number; className?: string }> };
 
@@ -91,6 +92,7 @@ type SidebarProps = {
 
 export function Sidebar({ className, onNavigate }: SidebarProps) {
   const pathname = usePathname();
+  const { schoolName, logoUrl } = useSchoolBranding();
   const sorted = [...flatItems].sort((a, b) => b.href.length - a.href.length);
   const current = sorted.find((l) => pathname === l.href || pathname.startsWith(`${l.href}/`));
 
@@ -103,15 +105,15 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
       )}
     >
       <div className="mb-6 rounded-xl border border-[var(--border)] bg-gradient-to-br from-[var(--accent-blue)]/12 to-transparent p-3 dark:from-[var(--accent-blue)]/20">
-        <div className="flex items-center gap-3">
-          <SchoolLogo size={40} />
+        <Link href="/dashboard" className="flex cursor-pointer items-center gap-3">
+          <SchoolLogo size={40} logoUrl={logoUrl} />
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-              NEW OXFORD GRAMMER SCHOOL
+              {schoolName}
             </p>
             <h1 className="text-sm font-semibold text-[var(--accent-blue)]">Management System</h1>
           </div>
-        </div>
+        </Link>
       </div>
       <nav className="flex-1 space-y-5 overflow-y-auto pr-1">
         {groups.map((group) => (

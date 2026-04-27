@@ -26,6 +26,10 @@
 
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-elevated: 0 4px 6px rgba(0, 0, 0, 0.07), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --form-bg: #f8fafc;
+  --form-border: #cbd5e1;
+  --form-text: #0f172a;
+  --form-placeholder: #64748b;
 
   /* Legacy vars for compatibility */
   --background: var(--bg-primary);
@@ -64,6 +68,10 @@
 
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-elevated: 0 4px 6px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+  --form-bg: #0f172a;
+  --form-border: #334155;
+  --form-text: #f8fafc;
+  --form-placeholder: #94a3b8;
 
   /* Legacy vars for compatibility */
   --background: var(--bg-primary);
@@ -196,6 +204,35 @@ h6 {
   font-size: 0.875rem;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+/* Normalize hardcoded dark form controls to a readable theme palette */
+:is(input, select, textarea)[class*="bg-slate-900"] {
+  background-color: var(--form-bg) !important;
+  border-color: var(--form-border) !important;
+  color: var(--form-text) !important;
+  -webkit-text-fill-color: var(--form-text) !important;
+  caret-color: var(--form-text) !important;
+}
+
+:is(input, select, textarea)[class*="bg-slate-900"]::placeholder {
+  color: var(--form-placeholder) !important;
+  opacity: 1 !important;
+}
+
+:is(input, select, textarea)[class*="bg-slate-900"] option {
+  color: var(--form-text);
+  background-color: var(--form-bg);
+}
+
+/* Chromium autofill can force dark text; override it */
+input[class*="bg-slate-900"]:-webkit-autofill,
+input[class*="bg-slate-900"]:-webkit-autofill:hover,
+input[class*="bg-slate-900"]:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--form-text) !important;
+  caret-color: var(--form-text) !important;
+  box-shadow: 0 0 0px 1000px var(--form-bg) inset !important;
+  transition: background-color 9999s ease-in-out 0s;
 }
 
 .print-only {

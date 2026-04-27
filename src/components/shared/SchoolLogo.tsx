@@ -1,16 +1,22 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils/cn";
 
 type Props = {
   size?: number;
   className?: string;
+  logoUrl?: string | null;
 };
 
-export function SchoolLogo({ size = 40, className }: Props) {
+export function SchoolLogo({ size = 40, className, logoUrl }: Props) {
   const [failed, setFailed] = useState(false);
+  const src = logoUrl?.trim() || "/logo.png";
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
 
   if (failed) {
     return (
@@ -28,7 +34,7 @@ export function SchoolLogo({ size = 40, className }: Props) {
 
   return (
     <Image
-      src="/logo.png"
+      src={src}
       alt="School Logo"
       width={size}
       height={size}

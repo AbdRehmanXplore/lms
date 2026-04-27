@@ -1,7 +1,8 @@
 export const ORDERED_CLASSES = [
   "Play Group",
-  "Junior",
   "Montessory",
+  "Junior",
+  "Senior",
   "Class 1",
   "Class 2",
   "Class 3",

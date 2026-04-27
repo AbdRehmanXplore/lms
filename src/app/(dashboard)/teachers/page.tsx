@@ -16,7 +16,8 @@ export default function TeachersPage() {
       const { data, error } = await supabase
         .from("teachers")
         .select("id,full_name,employee_code,subject,class_assigned,salary,status,profile_photo")
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .limit(100);
       if (!error && data) setTeachers(data as TeacherRow[]);
       setLoading(false);
     };

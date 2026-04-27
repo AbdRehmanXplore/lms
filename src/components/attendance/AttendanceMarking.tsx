@@ -21,7 +21,7 @@ export function AttendanceMarking() {
     void supabase
       .from("classes")
       .select("id,name")
-      .order("name")
+      .order("sort_order")
       .then(({ data }) => setClasses(data ?? []));
   }, [supabase]);
 
@@ -34,14 +34,17 @@ export function AttendanceMarking() {
       return;
     }
     const load = async () => {
-      const { data: studs } = await supabase
-        .from("students")
-        .select("id,roll_number,full_name,student_uid")
-        .eq("class_id", classId)
-        .eq("status", "active")
-        .order("roll_number");
+      const [{ data: studs }, { data: att }] = await Promise.all([
+        supabase
+          .from("students")
+          .select("id,roll_number,full_name,student_uid")
+          .eq("class_id", classId)
+          .eq("status", "active")
+          .order("roll_number")
+          .limit(100),
+        supabase.from("attendance").select("student_id,status").eq("class_id", classId).eq("date", date),
+      ]);
       setStudents(studs ?? []);
-      const { data: att } = await supabase.from("attendance").select("student_id,status").eq("class_id", classId).eq("date", date);
       const m: Record<string, Status> = {};
       (studs ?? []).forEach((s) => {
         const row = (att ?? []).find((a) => a.student_id === s.id);

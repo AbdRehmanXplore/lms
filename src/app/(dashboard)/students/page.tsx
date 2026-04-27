@@ -16,7 +16,8 @@ export default function StudentsPage() {
       const { data, error } = await supabase
         .from("students")
         .select("id,student_uid,roll_number,full_name,father_name,gender,status,profile_photo,classes(name)")
-        .order("roll_number");
+        .order("roll_number")
+        .limit(100);
       if (!error && data) {
         const mapped: StudentRow[] = (data as unknown as Record<string, unknown>[]).map((row) => {
           const cls = row.classes as { name: string } | { name: string }[] | null;

@@ -194,7 +194,7 @@ export function TeacherForm({ classes, teacherId, defaultValues, suggestedEmploy
         <p className="text-sm font-medium text-slate-200">Teacher Profile Photo</p>
         <div className="flex items-center gap-4">
           <ProfilePhoto src={photoPreview} alt="Teacher" name={form.watch("fullName")} size={72} />
-          <label className="cursor-pointer rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800">
+          <label className="cursor-pointer rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface-2)] px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-surface)]">
             Choose photo
             <input
               type="file"

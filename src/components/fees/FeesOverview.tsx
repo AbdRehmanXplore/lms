@@ -53,7 +53,8 @@ export function FeesOverview() {
       .select(
         "id,voucher_number,amount,month,status,payment_date,payment_method,received_by,is_defaulter,due_date,student_id,students(full_name,roll_number,student_uid,classes(name))",
       )
-      .order("due_date", { ascending: true });
+      .order("due_date", { ascending: true })
+      .limit(100);
 
     const list = ((all ?? []) as Record<string, unknown>[]).map((row) => {
       const st = row.students as Record<string, unknown> | Record<string, unknown>[] | null;

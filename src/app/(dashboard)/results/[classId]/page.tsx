@@ -56,7 +56,8 @@ export default function ClassResultsPage() {
             .from("students")
             .select("id,roll_number,full_name,father_name")
             .eq("class_id", classId)
-            .order("roll_number"),
+            .order("roll_number")
+            .limit(100),
           supabase.from("subjects").select("id,name,passing_marks,max_marks").eq("class_id", classId),
           supabase
             .from("results")
@@ -98,6 +99,10 @@ export default function ClassResultsPage() {
         if (!byStudent.has(k)) byStudent.set(k, []);
         byStudent.get(k)?.push(r);
       });
+      const resultByStudentSubject = new Map<string, (typeof resultRows)[number]>();
+      (resultRows ?? []).forEach((r) => {
+        resultByStudentSubject.set(`${r.student_id}|${r.subject_id}`, r);
+      });
       const generated = (studentRows ?? [])
         .map((s) => {
           const studentResultRows = byStudent.get(s.id) ?? [];
@@ -109,7 +114,7 @@ export default function ClassResultsPage() {
           for (const subName of FIXED_SUBJECTS) {
             const subject = subjectsByName[subName];
             if (!subject) return null;
-            const row = studentResultRows.find((r) => r.subject_id === subject.id);
+            const row = resultByStudentSubject.get(`${s.id}|${subject.id}`);
             if (!row) return null;
             const marks = Number(row.marks_obtained);
             marksBySubject[subName] = marks;

@@ -11,9 +11,9 @@ export default function AddTeacherPage() {
 
   useEffect(() => {
     const load = async () => {
-      const { data: classRows } = await supabase.from("classes").select("id,name").order("name");
+      const { data: classRows } = await supabase.from("classes").select("id,name").order("sort_order");
       setClasses(classRows ?? []);
-      const { count } = await supabase.from("teachers").select("*", { count: "exact", head: true });
+      const { count } = await supabase.from("teachers").select("id", { count: "exact", head: true });
       setSuggestedCode(`TCH-${String((count ?? 0) + 1).padStart(3, "0")}`);
     };
     void load();

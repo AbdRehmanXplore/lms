@@ -14,10 +14,10 @@ function AddStudentContent() {
 
   useEffect(() => {
     const load = async () => {
-      const { data: classRows } = await supabase.from("classes").select("id,name").order("name");
+      const { data: classRows } = await supabase.from("classes").select("id,name").order("sort_order");
       setClasses(classRows ?? []);
       const year = new Date().getFullYear();
-      const { count } = await supabase.from("students").select("*", { count: "exact", head: true });
+      const { count } = await supabase.from("students").select("id", { count: "exact", head: true });
       setSuggestedRoll(`${year}-${String((count ?? 0) + 1).padStart(3, "0")}`);
     };
     void load();

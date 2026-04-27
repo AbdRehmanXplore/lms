@@ -16,36 +16,37 @@ export default function ClassesPage() {
     const load = async () => {
       setLoading(true);
       setError(null);
-      const { data: classes, error: classError } = await supabase.from("classes").select("id,name");
+      const { data: classes, error: classError } = await supabase.from("classes").select("id,name").order("sort_order");
       if (classError) {
         setError(classError.message);
         setLoading(false);
         return;
       }
 
-      const out: { id: string | null; name: string; count: number }[] = [];
-      for (const className of ORDERED_CLASSES) {
+      const classCounts = await Promise.all(
+        (classes ?? []).map(async (cls) => {
+          const { count, error: countError } = await supabase
+            .from("students")
+            .select("id", { count: "exact", head: true })
+            .eq("class_id", cls.id)
+            .eq("status", "active");
+          if (countError) throw new Error(countError.message);
+          return { classId: cls.id, count: count ?? 0 };
+        }),
+      );
+      const countMap = new Map(classCounts.map((c) => [c.classId, c.count]));
+      const out: { id: string | null; name: string; count: number }[] = ORDERED_CLASSES.map((className) => {
         const cls = (classes ?? []).find((c) => c.name === className);
-        if (!cls) {
-          out.push({ id: null, name: className, count: 0 });
-          continue;
-        }
-        const { count, error: countError } = await supabase
-          .from("students")
-          .select("*", { count: "exact", head: true })
-          .eq("class_id", cls.id)
-          .eq("status", "active");
-        if (countError) {
-          setError(countError.message);
-          setLoading(false);
-          return;
-        }
-        out.push({ id: cls.id, name: cls.name, count: count ?? 0 });
-      }
+        if (!cls) return { id: null, name: className, count: 0 };
+        return { id: cls.id, name: cls.name, count: countMap.get(cls.id) ?? 0 };
+      });
       setItems(out);
       setLoading(false);
     };
-    void load();
+    void load().catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : "Failed to load classes");
+      setLoading(false);
+    });
   }, [supabase]);
 
   if (loading) {
