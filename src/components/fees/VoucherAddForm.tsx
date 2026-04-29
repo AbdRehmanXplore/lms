@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
-import { generateVoucherNumber } from "@/lib/utils/generateVoucherNumber";
+import { allocateFeeVoucherNumber } from "@/lib/utils/generateVoucherNumber";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
@@ -95,8 +95,7 @@ export function VoucherAddForm() {
     }
     setLoading(true);
     const y = year;
-    const { count } = await supabase.from("fee_vouchers").select("*", { count: "exact", head: true });
-    const voucherNumber = generateVoucherNumber((count ?? 0) + 1, y);
+    const voucherNumber = await allocateFeeVoucherNumber(supabase, y);
 
     let total = parseFloat(amount);
     let lineItems: { month: string; amount: number }[] | null = null;
@@ -113,6 +112,9 @@ export function VoucherAddForm() {
       student_id: studentId,
       voucher_number: voucherNumber,
       amount: total,
+      amount_paid: createAsPaid ? total : 0,
+      remaining_amount: createAsPaid ? 0 : total,
+      is_partial: false,
       due_date: dueDate,
       month: monthLabel,
       status: createAsPaid ? "paid" : "unpaid",
@@ -153,23 +155,30 @@ export function VoucherAddForm() {
     setLoading(true);
     const { data: studs } = await supabase.from("students").select("id").eq("class_id", bulkClassId).eq("status", "active");
     const y = year;
-    const { count } = await supabase.from("fee_vouchers").select("*", { count: "exact", head: true });
-    let seq = (count ?? 0) + 1;
     const amt = parseFloat(bulkAmount);
+    let ok = 0;
     for (const s of studs ?? []) {
-      const voucherNumber = generateVoucherNumber(seq, y);
-      seq += 1;
-      await supabase.from("fee_vouchers").insert({
+      const voucherNumber = await allocateFeeVoucherNumber(supabase, y);
+      const { error } = await supabase.from("fee_vouchers").insert({
         student_id: s.id,
         voucher_number: voucherNumber,
         amount: amt,
+        amount_paid: 0,
+        remaining_amount: amt,
+        is_partial: false,
         due_date: dueDate,
         month: monthLabel,
         status: "unpaid",
       });
+      if (error) {
+        setLoading(false);
+        toast.error(error.message);
+        return;
+      }
+      ok += 1;
     }
     setLoading(false);
-    toast.success(`Generated ${studs?.length ?? 0} vouchers`);
+    toast.success(`Generated ${ok} voucher${ok === 1 ? "" : "s"}`);
     router.push("/fees");
   };
 

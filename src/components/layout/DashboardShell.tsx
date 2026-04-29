@@ -6,6 +6,7 @@ import { Sidebar } from "./Sidebar";
 import { cn } from "@/lib/utils/cn";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { SchoolBrandingProvider } from "@/components/providers/SchoolBrandingProvider";
+import { WhatsAppAgentProvider } from "@/components/WhatsAppAgent";
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const supabase = useSupabaseClient();
@@ -20,6 +21,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <SchoolBrandingProvider>
+      <WhatsAppAgentProvider>
       <div className="flex min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)]">
       {mobileNav && (
         <button
@@ -43,6 +45,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         <main className="flex-1 p-4 md:p-6">{children}</main>
       </div>
       </div>
+      </WhatsAppAgentProvider>
     </SchoolBrandingProvider>
   );
 }

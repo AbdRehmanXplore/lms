@@ -1,6 +1,6 @@
 import { VoucherAddForm } from "@/components/fees/VoucherAddForm";
 
-export default function FeesAddPage() {
+export default function FeesGeneratePage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Generate fee voucher</h1>

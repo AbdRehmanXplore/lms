@@ -1,0 +1,5 @@
+Update the N8N "Fetch Unpaid Students" HTTP Request node URL to filter only marked defaulters:
+
+https://uzrlvvmptnjtvedfsdzw.supabase.co/rest/v1/fee_vouchers?select=student_id,amount,month,is_defaulter,students(full_name,phone,whatsapp_reminders)&status=eq.unpaid&is_defaulter=eq.true
+
+Add filter whatsapp_reminders in your workflow (or a separate Supabase query on students) so rows where whatsapp_reminders = false are skipped before sending WhatsApp.

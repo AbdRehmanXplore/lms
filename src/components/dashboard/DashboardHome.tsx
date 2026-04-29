@@ -54,6 +54,7 @@ type ActivityItem = { id: string; label: string; sub: string; at: string; icon: 
 type RecentFeeRow = {
   id: string;
   amount: number;
+  amount_paid: number | null;
   payment_date: string | null;
   status: string;
   students:
@@ -141,16 +142,23 @@ export function DashboardHome() {
           .select("id", { count: "exact", head: true })
           .eq("status", "active")
           .gte("created_at", monthStart),
-        supabase.from("fee_vouchers").select("amount").eq("status", "paid").eq("payment_date", today),
-        supabase.from("fee_vouchers").select("amount,student_id").in("status", ["unpaid", "overdue"]),
+        supabase
+          .from("fee_vouchers")
+          .select("amount_paid")
+          .in("status", ["paid", "partial"])
+          .eq("payment_date", today),
+        supabase.from("fee_vouchers").select("amount,remaining_amount,student_id").in("status", ["unpaid", "overdue"]),
         supabase
           .from("fee_vouchers")
           .select("id", { count: "exact", head: true })
           .in("status", ["unpaid", "overdue"]),
         supabase.from("expenses").select("amount").gte("expense_date", monthStart).lte("expense_date", monthEnd),
       ]);
-      const feeToday = (paidToday ?? []).reduce((a, r) => a + Number(r.amount), 0);
-      const unpaidTotal = (unpaidRows ?? []).reduce((a, r) => a + Number(r.amount), 0);
+      const feeToday = (paidToday ?? []).reduce((a, r) => a + Number((r as { amount_paid?: number }).amount_paid ?? 0), 0);
+      const unpaidTotal = (unpaidRows ?? []).reduce(
+        (a, r) => a + Number((r as { remaining_amount?: number; amount?: number }).remaining_amount ?? (r as { amount?: number }).amount ?? 0),
+        0,
+      );
       const unpaidSet = new Set((unpaidRows ?? []).map((r) => r.student_id).filter(Boolean));
       const unpaidStudents = unpaidSet.size;
       const expensesMonth = (expMonth ?? []).reduce((a, r) => a + Number(r.amount), 0);
@@ -177,18 +185,18 @@ export function DashboardHome() {
           .eq("status", "unpaid"),
         supabase.from("students").select("class_id, classes(name)").eq("status", "active").limit(300),
         supabase.from("attendance").select("date,status").gte("date", new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)),
-        supabase.from("fee_vouchers").select("amount, status, students(classes(name))").limit(1000),
+        supabase.from("fee_vouchers").select("amount,amount_paid,remaining_amount,status, students(classes(name))").limit(1000),
         supabase
           .from("fee_vouchers")
-          .select("id,amount,payment_date,status,students(full_name,classes(name))")
-          .eq("status", "paid")
+          .select("id,amount,amount_paid,payment_date,status,students(full_name,classes(name))")
+          .in("status", ["paid", "partial"])
           .order("payment_date", { ascending: false, nullsFirst: false })
           .limit(10),
         supabase.from("students").select("id,full_name,created_at").order("created_at", { ascending: false }).limit(4),
         supabase
           .from("fee_vouchers")
-          .select("id,month,amount,payment_date,status")
-          .eq("status", "paid")
+          .select("id,month,amount,amount_paid,payment_date,status")
+          .in("status", ["paid", "partial"])
           .order("payment_date", { ascending: false, nullsFirst: false })
           .limit(4),
         supabase
@@ -230,14 +238,14 @@ export function DashboardHome() {
           Promise.all([
             supabase
               .from("fee_vouchers")
-              .select("amount, payment_date, status")
-              .eq("status", "paid")
+              .select("amount_paid, payment_date, status")
+              .in("status", ["paid", "partial"])
               .gte("payment_date", start)
               .lte("payment_date", end),
             supabase.from("expenses").select("amount").gte("expense_date", start).lte("expense_date", end),
           ]).then(([{ data: vouchers }, { data: exps }]) => ({
             month: d.toLocaleString("en", { month: "short" }),
-            fees: (vouchers ?? []).reduce((a, r) => a + Number(r.amount), 0),
+            fees: (vouchers ?? []).reduce((a, r) => a + Number((r as { amount_paid?: number }).amount_paid ?? 0), 0),
             expenses: (exps ?? []).reduce((a, r) => a + Number(r.amount), 0),
           })),
         );
@@ -281,9 +289,15 @@ export function DashboardHome() {
         const st = row.students as { classes?: { name: string } | { name: string }[] } | null;
         const cn = classNameFromStudent(st ?? null);
         const cur = feeMap.get(cn) ?? { paid: 0, pending: 0 };
-        const amt = Number(row.amount);
-        if (row.status === "paid") cur.paid += amt;
-        else cur.pending += amt;
+        const status = String(row.status ?? "");
+        const amt = Number(row.amount ?? 0);
+        const ap = Number((row.amount_paid as number | undefined) ?? 0);
+        const rem = Number((row.remaining_amount as number | undefined) ?? amt);
+        if (status === "paid" || status === "partial") {
+          cur.paid += status === "partial" ? ap : Number(ap || amt);
+        } else if (status === "unpaid" || status === "overdue") {
+          cur.pending += rem;
+        }
         feeMap.set(cn, cur);
       });
       const feeBars: ClassFeeRow[] = [...feeMap.entries()]
@@ -461,7 +475,7 @@ export function DashboardHome() {
   const quickActions = [
     { href: "/students/add", label: "Add Student", icon: Plus, className: "bg-blue-600 hover:bg-blue-700 text-white" },
     { href: "/teachers/add", label: "Add Teacher", icon: Plus, className: "bg-violet-600 hover:bg-violet-700 text-white" },
-    { href: "/fees/add", label: "New Voucher", icon: FileText, className: "bg-emerald-600 hover:bg-emerald-700 text-white" },
+    { href: "/fees/generate", label: "New Voucher", icon: FileText, className: "bg-emerald-600 hover:bg-emerald-700 text-white" },
     { href: "/results", label: "Enter Result", icon: ClipboardList, className: "bg-amber-600 hover:bg-amber-700 text-white" },
     { href: "/attendance", label: "Attendance", icon: CalendarCheck, className: "bg-sky-600 hover:bg-sky-700 text-white" },
     { href: "/finance/salaries", label: "Pay Salary", icon: CreditCard, className: "bg-teal-600 hover:bg-teal-700 text-white" },
@@ -759,7 +773,7 @@ export function DashboardHome() {
                   <tr key={f.id} className={cn(idx % 2 === 1 && "bg-[var(--bg-surface-2)]/50")}>
                     <td className="font-medium">{(Array.isArray(f.students) ? f.students[0] : f.students)?.full_name ?? "—"}</td>
                     <td>{classNameFromStudent(Array.isArray(f.students) ? f.students[0] ?? null : f.students)}</td>
-                    <td>{formatCurrency(Number(f.amount))}</td>
+                    <td>{formatCurrency(Number(f.amount_paid ?? f.amount))}</td>
                     <td>{f.payment_date ? new Date(f.payment_date).toLocaleDateString() : "—"}</td>
                     <td>
                       <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">

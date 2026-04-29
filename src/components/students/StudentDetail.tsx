@@ -36,7 +36,15 @@ export function StudentDetail({ studentId }: { studentId: string }) {
   const [student, setStudent] = useState<Student | null>(null);
   const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
   const [vouchers, setVouchers] = useState<
-    { id: string; month: string; amount: number; status: string; due_date: string }[]
+    {
+      id: string;
+      month: string;
+      amount: number;
+      amount_paid: number | null;
+      remaining_amount: number | null;
+      status: string;
+      due_date: string;
+    }[]
   >([]);
   const [attendanceSummary, setAttendanceSummary] = useState<{ present: number; absent: number; late: number }>({
     present: 0,
@@ -54,7 +62,7 @@ export function StudentDetail({ studentId }: { studentId: string }) {
     setClasses(c ?? []);
     const { data: v } = await supabase
       .from("fee_vouchers")
-      .select("id,month,amount,status,due_date")
+      .select("id,month,amount,amount_paid,remaining_amount,status,due_date")
       .eq("student_id", studentId)
       .order("issue_date", { ascending: false });
     setVouchers(v ?? []);
@@ -93,7 +101,9 @@ export function StudentDetail({ studentId }: { studentId: string }) {
       }
     : undefined;
 
-  const outstanding = vouchers.filter((x) => x.status === "unpaid" || x.status === "overdue").reduce((a, b) => a + Number(b.amount), 0);
+  const outstanding = vouchers
+    .filter((x) => x.status === "unpaid" || x.status === "overdue")
+    .reduce((a, b) => a + Number(b.remaining_amount ?? b.amount ?? 0), 0);
 
   const onDelete = async () => {
     setDeleting(true);
@@ -156,7 +166,9 @@ export function StudentDetail({ studentId }: { studentId: string }) {
             <thead className="text-left text-slate-400">
               <tr>
                 <th className="p-2">Month</th>
-                <th className="p-2">Amount</th>
+                <th className="p-2">Total</th>
+                <th className="p-2">Paid</th>
+                <th className="p-2">Remaining</th>
                 <th className="p-2">Status</th>
                 <th className="p-2">Due</th>
               </tr>
@@ -164,7 +176,7 @@ export function StudentDetail({ studentId }: { studentId: string }) {
             <tbody>
               {vouchers.length === 0 ? (
                 <tr>
-                  <td className="p-2 text-slate-500" colSpan={4}>
+                  <td className="p-2 text-slate-500" colSpan={6}>
                     No vouchers.
                   </td>
                 </tr>
@@ -173,6 +185,16 @@ export function StudentDetail({ studentId }: { studentId: string }) {
                   <tr key={v.id} className="border-t border-slate-700">
                     <td className="p-2">{v.month}</td>
                     <td className="p-2">{formatCurrency(Number(v.amount))}</td>
+                    <td className="p-2">{formatCurrency(Number(v.amount_paid ?? 0))}</td>
+                    <td className="p-2">
+                      {formatCurrency(
+                        Number(
+                          ["unpaid", "overdue"].includes(v.status)
+                            ? (v.remaining_amount ?? v.amount)
+                            : (v.remaining_amount ?? 0),
+                        ),
+                      )}
+                    </td>
                     <td className="p-2 capitalize">{v.status}</td>
                     <td className="p-2">{v.due_date}</td>
                   </tr>
@@ -181,6 +203,9 @@ export function StudentDetail({ studentId }: { studentId: string }) {
             </tbody>
           </table>
         </div>
+        <p className="mt-4 text-sm font-semibold text-amber-200">
+          Total Outstanding: {formatCurrency(outstanding)}
+        </p>
       </div>
 
       <div>

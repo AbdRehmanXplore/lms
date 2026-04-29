@@ -21,7 +21,7 @@
 - **Teachers:** List, add/edit, profile photo to storage, detail with salary/attendance context, salary module (`/finance/salaries`, related salary routes).
 - **Students:** List with Student ID, CRUD, auto `SMS-YYYY-XXXX` UID, profile photo, detail with fee history and attendance counts, delete with confirm.
 - **Results:** Per-class flow, 7 subjects, grades, save/update, generated list, print card.
-- **Fees:** Unpaid/paid tabs, search/filter, mark paid, defaulter flag, bulk class voucher generation, voucher detail/print patterns.
+- **Fees:** Unpaid/paid/defaulters tabs, search/filter, **partial payments** (columns `amount_paid`, `remaining_amount`, `is_partial`; status `partial`; remainder vouchers `*-R` / month suffix `(Remaining)`), mark payment modal with amount validation, defaulter flag + WhatsApp reminders, bulk class voucher generation, voucher detail/print receipts (paid full vs partial).
 - **Student attendance** and **attendance history** pages.
 - **Teacher attendance** (today, history, leaves) and dashboard-relevant stats.
 - **Timetable**, **admit cards**, **expenses** (summary + Recharts), **monthly** and **yearly** history.
@@ -39,6 +39,11 @@
 
 - **Next.js 16** may log a **deprecation** about the `middleware` file name (suggests `proxy`); the build still completes successfully.
 - The **reference SQL** block below may still define `whatsapp_reminders` and `whatsapp_reminder_log` for **legacy databases**. The **application does not use** WhatsApp or those tables.
+
+### Known bugs fixed (recent)
+
+- **Fee defaulters page stuck on “Compiling” / endless load:** `/fees/defaulters` now loads via direct `fee_vouchers` queries + client aggregation instead of broken nested `.eq('fee_vouchers…')` filters / reliance on `fee_defaulters` views.
+- **Partial payments:** Added schema columns + app logic (`supabase/partial_payment.sql`); dashboard/expenses **collections** charts sum **`amount_paid`** for `paid` + **`partial`** vouchers.
 
 ---
 

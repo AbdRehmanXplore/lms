@@ -8,7 +8,17 @@ export type Database = {
       };
       teachers: { Row: { id: string; employee_code: string; subject: string; status: "active" | "inactive" } };
       students: { Row: { id: string; roll_number: string; full_name: string; father_name: string } };
-      fee_vouchers: { Row: { id: string; voucher_number: string; amount: number; status: "paid" | "unpaid" | "overdue" } };
+      fee_vouchers: {
+        Row: {
+          id: string;
+          voucher_number: string;
+          amount: number;
+          status: "paid" | "unpaid" | "overdue" | "partial";
+          amount_paid?: number | null;
+          remaining_amount?: number | null;
+          is_partial?: boolean | null;
+        };
+      };
       attendance: { Row: { id: string; student_id: string; status: "present" | "absent" | "late"; date: string } };
       results: { Row: { id: string; student_id: string; class_id: string; exam_type: string; marks_obtained: number } };
     };

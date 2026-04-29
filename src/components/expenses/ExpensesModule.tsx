@@ -116,11 +116,11 @@ export function ExpensesModule() {
 
     const { data: paidV } = await supabase
       .from("fee_vouchers")
-      .select("amount")
-      .eq("status", "paid")
+      .select("amount_paid")
+      .in("status", ["paid", "partial"])
       .gte("payment_date", monthStart)
       .lte("payment_date", monthEnd);
-    const feesMonth = (paidV ?? []).reduce((a, r) => a + Number(r.amount), 0);
+    const feesMonth = (paidV ?? []).reduce((a, r) => a + Number((r as { amount_paid?: number }).amount_paid ?? 0), 0);
 
     setSummary({
       monthTotal,
@@ -166,8 +166,8 @@ export function ExpensesModule() {
         const end = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).toISOString().slice(0, 10);
         const { data: paid } = await supabase
           .from("fee_vouchers")
-          .select("amount")
-          .eq("status", "paid")
+          .select("amount_paid")
+          .in("status", ["paid", "partial"])
           .gte("payment_date", start)
           .lte("payment_date", end);
         const { data: ex } = await supabase
@@ -175,7 +175,7 @@ export function ExpensesModule() {
           .select("amount")
           .gte("expense_date", start)
           .lte("expense_date", end);
-        const fees = (paid ?? []).reduce((a, r) => a + Number(r.amount), 0);
+        const fees = (paid ?? []).reduce((a, r) => a + Number((r as { amount_paid?: number }).amount_paid ?? 0), 0);
         const exp = (ex ?? []).reduce((a, r) => a + Number(r.amount), 0);
         out.push({
           label: dt.toLocaleString("en", { month: "short", year: "2-digit" }),

@@ -53,7 +53,7 @@ const groups: Group[] = [
     title: "Finance",
     items: [
       { href: "/fees", label: "Fees Overview", icon: Wallet },
-      { href: "/fees/add", label: "Generate Voucher", icon: Wallet },
+      { href: "/fees/generate", label: "Generate Voucher", icon: Wallet },
       { href: "/fees/defaulters", label: "Fee Defaulters", icon: Wallet },
       { href: "/expenses", label: "Expenses", icon: PieChart },
       { href: "/finance/salaries", label: "Teacher Salaries", icon: Briefcase },

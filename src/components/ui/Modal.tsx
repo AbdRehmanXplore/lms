@@ -11,9 +11,19 @@ type Props = {
   onConfirm?: () => void;
   confirmLabel?: string;
   loading?: boolean;
+  confirmVariant?: "primary" | "danger" | "success";
 };
 
-export function Modal({ open, title, children, onClose, onConfirm, confirmLabel, loading }: Props) {
+export function Modal({
+  open,
+  title,
+  children,
+  onClose,
+  onConfirm,
+  confirmLabel,
+  loading,
+  confirmVariant = "danger",
+}: Props) {
   if (!open) return null;
 
   return (
@@ -38,7 +48,7 @@ export function Modal({ open, title, children, onClose, onConfirm, confirmLabel,
             <Button variant="secondary" type="button" onClick={onClose}>
               Cancel
             </Button>
-            <Button variant="danger" type="button" onClick={onConfirm} disabled={loading}>
+            <Button variant={confirmVariant === "danger" ? "danger" : confirmVariant === "success" ? "success" : "primary"} type="button" onClick={onConfirm} disabled={loading}>
               {loading ? "..." : confirmLabel ?? "Confirm"}
             </Button>
           </div>
