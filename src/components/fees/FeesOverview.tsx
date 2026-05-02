@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
-import { useWhatsAppAgentSafe } from "@/components/WhatsAppAgent";
 
 function roundMoney(n: number) {
   return Math.round(n * 100) / 100;
@@ -67,7 +66,6 @@ function outstandingBalance(v: Voucher): number {
 
 export function FeesOverview() {
   const supabase = useSupabaseClient();
-  const wa = useWhatsAppAgentSafe();
   const [tab, setTab] = useState<"unpaid" | "paid" | "defaulters">("unpaid");
   const [rows, setRows] = useState<Voucher[]>([]);
   const [search, setSearch] = useState("");
@@ -353,7 +351,7 @@ export function FeesOverview() {
       toast.error(error.message);
       return;
     }
-    toast.success(next ? "Auto WhatsApp reminders enabled" : "Auto WhatsApp reminders disabled");
+    toast.success(next ? "Automatic reminders enabled" : "Automatic reminders disabled");
     void refresh();
   };
 
@@ -586,17 +584,10 @@ export function FeesOverview() {
                     <button
                       type="button"
                       disabled={removeSavingStudentId === d.student_id}
-                      className="mr-2 text-xs font-medium text-slate-300 underline hover:text-white disabled:opacity-50"
+                      className="text-xs font-medium text-slate-300 underline hover:text-white disabled:opacity-50"
                       onClick={() => void removeFromDefaulters(d.student_id, d.full_name)}
                     >
                       {removeSavingStudentId === d.student_id ? "Removing…" : "Remove from Defaulters"}
-                    </button>
-                    <button
-                      type="button"
-                      className="text-xs font-medium text-emerald-400 underline hover:text-emerald-300"
-                      onClick={() => wa?.openAgent({ studentIds: [d.student_id] })}
-                    >
-                      Send Message Now
                     </button>
                   </td>
                 </tr>
@@ -677,7 +668,7 @@ export function FeesOverview() {
         <p className="text-sm leading-relaxed text-slate-300">
           Mark <strong>{confirmMarkDefaulter?.students?.full_name ?? "this student"}</strong> as fee defaulter?
           <br />
-          <span className="text-slate-400">This will enable automatic WhatsApp reminders.</span>
+          <span className="text-slate-400">Automatic reminders can be adjusted per student after marking.</span>
         </p>
       </Modal>
     </div>

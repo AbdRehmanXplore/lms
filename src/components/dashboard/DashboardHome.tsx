@@ -33,6 +33,7 @@ import {
   Printer,
   Archive,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { useFeeDefaulters } from "@/lib/hooks/useFeeDefaulters";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
@@ -377,28 +378,48 @@ export function DashboardHome() {
         teacherAtt,
         pendingFeesCount: pendingFeesCount ?? 0,
       });
+    } catch (e) {
+      console.error("Dashboard load failed:", e);
+      toast.error(
+        "Could not load dashboard data. Check Supabase connection and run migrations (e.g. partial_payment.sql).",
+      );
     } finally {
       setLoading(false);
     }
   }, [supabase, monthStart, monthEnd, today, ym, now]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only chart mount gate
-    setChartsReady(true);
+    let cancelled = false;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!cancelled) setChartsReady(true);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async dashboard bootstrap load
     void load();
-    const ch = supabase
-      .channel("dash-refresh")
-      .on("postgres_changes", { event: "*", schema: "public", table: "teacher_attendance" }, () => void load())
-      .on("postgres_changes", { event: "*", schema: "public", table: "fee_vouchers" }, () => void load())
-      .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => void load())
-      .on("postgres_changes", { event: "*", schema: "public", table: "teacher_salaries" }, () => void load())
-      .subscribe();
+    let ch: ReturnType<typeof supabase.channel> | null = null;
+    try {
+      ch = supabase
+        .channel("dash-refresh")
+        .on("postgres_changes", { event: "*", schema: "public", table: "teacher_attendance" }, () => void load())
+        .on("postgres_changes", { event: "*", schema: "public", table: "fee_vouchers" }, () => void load())
+        .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => void load())
+        .on("postgres_changes", { event: "*", schema: "public", table: "teacher_salaries" }, () => void load())
+        .subscribe((status) => {
+          if (status === "CHANNEL_ERROR") {
+            console.warn("Dashboard realtime subscription unavailable");
+          }
+        });
+    } catch (e) {
+      console.warn("Realtime subscribe skipped:", e);
+    }
     return () => {
-      void supabase.removeChannel(ch);
+      if (ch) void supabase.removeChannel(ch);
     };
   }, [supabase, load]);
 
