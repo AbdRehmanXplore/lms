@@ -19,6 +19,7 @@ import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
+import { scheduleEffectLoad } from "@/lib/utils/scheduleEffectLoad";
 
 const CATEGORIES = [
   "Salaries",
@@ -134,7 +135,9 @@ export function ExpensesModule() {
   }, [supabase]);
 
   useEffect(() => {
-    void load();
+    return scheduleEffectLoad(() => {
+      void load();
+    });
   }, [load]);
 
   const filtered = useMemo(() => {

@@ -5,78 +5,70 @@ import { useReactToPrint } from "react-to-print";
 import { toast } from "sonner";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
+import { currentSalaryMonthYear } from "@/lib/utils/salaryPeriod";
+import { scheduleEffectLoad } from "@/lib/utils/scheduleEffectLoad";
 import { Button } from "@/components/ui/Button";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
 import { Input } from "@/components/ui/Input";
 import { Loader2 } from "lucide-react";
+import Link from "next/link";
 
-export type TeacherSalaryRow = {
+export type SalaryRecordRow = {
   id: string;
   teacher_id: string;
-  month_year: string;
-  salary_amount: number;
+  month: string;
+  year: string;
+  amount: number;
   status: "paid" | "unpaid";
-  due_date: string;
-  paid_date: string | null;
+  payment_date: string | null;
+  payment_method: string | null;
   paid_by: string | null;
-  payment_method: "Cash" | "Bank Transfer" | "Cheque" | null;
-  remarks: string | null;
   teachers:
     | {
         full_name: string | null;
         employee_code: string;
         subject: string;
-        qualification: string | null;
+        class_assigned: string | null;
         profile_photo: string | null;
       }
     | {
         full_name: string | null;
         employee_code: string;
         subject: string;
-        qualification: string | null;
+        class_assigned: string | null;
         profile_photo: string | null;
       }[]
     | null;
 };
 
-function monthYearLabel(ym: string) {
-  const [y, m] = ym.split("-").map(Number);
-  if (!y || !m) return ym;
-  return new Date(y, m - 1, 1).toLocaleString("en", { month: "long", year: "numeric" });
+function monthYearLabel(m: string, y: string) {
+  return `${m} ${y}`;
 }
 
 function formatShortDate(d: string) {
-  return new Date(d + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return new Date(`${d}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function monthOptions(count = 18) {
-  const out: { value: string; label: string }[] = [];
-  const now = new Date();
-  for (let i = 0; i < count; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    out.push({ value, label: monthYearLabel(value) });
-  }
-  return out;
-}
-
-function receiptNumber(row: TeacherSalaryRow) {
+export function salaryReceiptNumber(row: SalaryRecordRow) {
   const seq = row.id.replace(/-/g, "").slice(0, 6).toUpperCase();
-  return `SAL-${row.month_year.replace("-", "")}-${seq}`;
+  return `SAL-${row.year}-${row.month.slice(0, 3).toUpperCase()}-${seq}`;
 }
 
-type PayModalState = TeacherSalaryRow | null;
+type PayModalState = SalaryRecordRow | null;
+
+type FilterTab = "all" | "paid" | "unpaid";
+
+type CancelRef = { cancelled: boolean };
 
 export function TeacherSalariesModule() {
   const supabase = useSupabaseClient();
-  const [monthYear, setMonthYear] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  });
-  const [rows, setRows] = useState<TeacherSalaryRow[]>([]);
+  const [{ month: curMonth, year: curYear }, setPeriod] = useState(() => currentSalaryMonthYear());
+  const [rows, setRows] = useState<SalaryRecordRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<FilterTab>("all");
   const [payRow, setPayRow] = useState<PayModalState>(null);
-  const [receiptRow, setReceiptRow] = useState<TeacherSalaryRow | null>(null);
+  const [bulkPayOpen, setBulkPayOpen] = useState(false);
+  const [receiptRow, setReceiptRow] = useState<SalaryRecordRow | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
@@ -88,82 +80,108 @@ export function TeacherSalariesModule() {
     remarks: "",
   });
 
-  const handlePrint = useReactToPrint({
-    contentRef: printRef,
-    documentTitle: receiptRow ? receiptNumber(receiptRow) : "salary-receipt",
+  const [bulkPayForm, setBulkPayForm] = useState({
+    paymentDate: new Date().toISOString().slice(0, 10),
+    paymentMethod: "Cash" as "Cash" | "Bank Transfer" | "Cheque",
   });
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { error: genErr } = await supabase.rpc("generate_monthly_salaries", { p_month_year: monthYear });
-      if (genErr) {
-        // Fallback: if SQL function is not deployed yet, generate current month records client-side.
-        if ((genErr as { code?: string }).code === "PGRST202") {
-          const { data: teachers, error: tErr } = await supabase
-            .from("teachers")
-            .select("id,salary,status")
-            .eq("status", "active");
-          if (!tErr && teachers?.length) {
-            const dueDate = `${monthYear}-11`;
-            const seedRows = teachers.map((t) => ({
-              teacher_id: t.id,
-              month_year: monthYear,
-              salary_amount: Number(t.salary ?? 0),
-              status: "unpaid" as const,
-              due_date: dueDate,
-            }));
-            await supabase.from("teacher_salaries").upsert(seedRows, { onConflict: "teacher_id,month_year" });
+  const handlePrint = useReactToPrint({
+    contentRef: printRef,
+    documentTitle: receiptRow ? salaryReceiptNumber(receiptRow) : "salary-receipt",
+  });
+
+  const applyIfActive = (cancel: CancelRef | undefined, fn: () => void) => {
+    if (cancel?.cancelled) return;
+    fn();
+  };
+
+  const loadData = useCallback(
+    async (cancel?: CancelRef) => {
+      applyIfActive(cancel, () => setLoading(true));
+      try {
+        const { month, year } = currentSalaryMonthYear();
+        applyIfActive(cancel, () => setPeriod({ month, year }));
+
+        const { error: rpcErr } = await supabase.rpc("generate_monthly_salaries");
+        if (rpcErr && (rpcErr as { code?: string }).code !== "PGRST202") {
+          if (!cancel?.cancelled) {
+            toast.error(rpcErr.message || "Could not run salary sync. Run supabase SQL (generate_monthly_salaries) in Supabase.");
           }
-        } else {
-          toast.error(genErr.message || "Could not sync salary records. Run teacher_salaries.sql in Supabase.");
         }
+
+        const { data, error } = await supabase
+          .from("salary_records")
+          .select(
+            "id,teacher_id,month,year,amount,status,payment_date,payment_method,paid_by,teachers(full_name,employee_code,subject,class_assigned,profile_photo)",
+          )
+          .eq("month", month)
+          .eq("year", year);
+
+        if (error) throw error;
+        const list = ((data ?? []) as SalaryRecordRow[]).map((row) => ({
+          ...row,
+          teachers: Array.isArray(row.teachers) ? row.teachers[0] ?? null : row.teachers,
+        }));
+        list.sort((a, b) => (a.teachers?.full_name ?? "").localeCompare(b.teachers?.full_name ?? "", undefined, { sensitivity: "base" }));
+        applyIfActive(cancel, () => setRows(list));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Load failed";
+        if (!cancel?.cancelled) {
+          toast.error(msg);
+        }
+        applyIfActive(cancel, () => setRows([]));
+      } finally {
+        applyIfActive(cancel, () => setLoading(false));
       }
+    },
+    [supabase],
+  );
 
-      const { data, error } = await supabase
-        .from("teacher_salaries")
-        .select(
-          "id,teacher_id,month_year,salary_amount,status,due_date,paid_date,paid_by,payment_method,remarks,teachers(full_name,employee_code,subject,qualification,profile_photo)",
-        )
-        .eq("month_year", monthYear);
-
-      if (error) throw error;
-      const list = ((data ?? []) as TeacherSalaryRow[])
-        .map((row) => ({ ...row, teachers: Array.isArray(row.teachers) ? row.teachers[0] ?? null : row.teachers }))
-        .sort((a, b) =>
-        (a.teachers?.full_name ?? "").localeCompare(b.teachers?.full_name ?? "", undefined, { sensitivity: "base" }),
-        );
-      setRows(list);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Load failed";
-      toast.error(msg);
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [supabase, monthYear]);
+  const load = useCallback(async () => {
+    await loadData();
+  }, [loadData]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async loader updates remote data state
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    void supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) return;
-      const { data } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
-      if (data?.full_name) setPayerName(data.full_name);
+    const cancel: CancelRef = { cancelled: false };
+    const cleanupSched = scheduleEffectLoad(() => {
+      void loadData(cancel);
     });
+    return () => {
+      cancel.cancelled = true;
+      cleanupSched();
+    };
+  }, [loadData]);
+
+  useEffect(() => {
+    const cancel: CancelRef = { cancelled: false };
+    const cleanupSched = scheduleEffectLoad(() => {
+      void supabase.auth.getUser().then(async ({ data: { user } }) => {
+        if (!user || cancel.cancelled) return;
+        const { data } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
+        if (cancel.cancelled) return;
+        if (data?.full_name) setPayerName(data.full_name);
+      });
+    });
+    return () => {
+      cancel.cancelled = true;
+      cleanupSched();
+    };
   }, [supabase]);
 
+  const filteredRows = useMemo(() => {
+    if (filter === "paid") return rows.filter((r) => r.status === "paid");
+    if (filter === "unpaid") return rows.filter((r) => r.status === "unpaid");
+    return rows;
+  }, [rows, filter]);
+
   const summary = useMemo(() => {
-    const total = rows.reduce((a, r) => a + Number(r.salary_amount), 0);
-    const paid = rows.filter((r) => r.status === "paid").reduce((a, r) => a + Number(r.salary_amount), 0);
-    const unpaid = rows.filter((r) => r.status === "unpaid").reduce((a, r) => a + Number(r.salary_amount), 0);
-    const nextDue = rows.find((r) => r.status === "unpaid");
-    const dueLabel = nextDue?.due_date ? formatShortDate(nextDue.due_date) : "—";
-    return { total, paid, unpaid, dueLabel };
+    const total = rows.reduce((a, r) => a + Number(r.amount), 0);
+    const paid = rows.filter((r) => r.status === "paid").reduce((a, r) => a + Number(r.amount), 0);
+    const unpaid = rows.filter((r) => r.status === "unpaid").reduce((a, r) => a + Number(r.amount), 0);
+    return { total, paid, unpaid };
   }, [rows]);
+
+  const unpaidRows = useMemo(() => rows.filter((r) => r.status === "unpaid"), [rows]);
 
   const confirmPayment = async () => {
     if (!payRow) return;
@@ -176,16 +194,15 @@ export function TeacherSalariesModule() {
 
       const teacher = Array.isArray(payRow.teachers) ? payRow.teachers[0] : payRow.teachers;
       const teacherName = teacher?.full_name ?? "Teacher";
-      const title = `Salary — ${teacherName} — ${monthYearLabel(payRow.month_year)}`;
+      const title = `Salary — ${teacherName} — ${monthYearLabel(payRow.month, payRow.year)}`;
 
       const { error: upErr } = await supabase
-        .from("teacher_salaries")
+        .from("salary_records")
         .update({
           status: "paid",
-          paid_date: payForm.paymentDate,
+          payment_date: payForm.paymentDate,
           paid_by: user.id,
           payment_method: payForm.paymentMethod,
-          remarks: payForm.remarks.trim() || null,
         })
         .eq("id", payRow.id)
         .eq("status", "unpaid");
@@ -195,17 +212,17 @@ export function TeacherSalariesModule() {
       const { error: exErr } = await supabase.from("expenses").insert({
         title,
         category: "Salaries",
-        amount: Number(payRow.salary_amount),
+        amount: Number(payRow.amount),
         expense_date: payForm.paymentDate,
         paid_to: teacherName,
         payment_method: payForm.paymentMethod,
-        notes: "Auto-added from salary payment",
+        notes: payForm.remarks.trim() || "Auto-added from salary payment",
         added_by: user.id,
       });
 
       if (exErr) throw exErr;
 
-      toast.success("Salary paid and added to expenses");
+      toast.success("Salary marked paid and added to expenses");
       setPayRow(null);
       await load();
     } catch (e: unknown) {
@@ -216,44 +233,113 @@ export function TeacherSalariesModule() {
     }
   };
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const confirmBulkPayment = async () => {
+    if (unpaidRows.length === 0) {
+      toast.error("No unpaid salaries");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not signed in");
 
-  const badge = (row: TeacherSalaryRow) => {
+      for (const row of unpaidRows) {
+        const teacher = Array.isArray(row.teachers) ? row.teachers[0] : row.teachers;
+        const teacherName = teacher?.full_name ?? "Teacher";
+        const title = `Salary — ${teacherName} — ${monthYearLabel(row.month, row.year)}`;
+
+        const { error: upErr } = await supabase
+          .from("salary_records")
+          .update({
+            status: "paid",
+            payment_date: bulkPayForm.paymentDate,
+            paid_by: user.id,
+            payment_method: bulkPayForm.paymentMethod,
+          })
+          .eq("id", row.id)
+          .eq("status", "unpaid");
+        if (upErr) throw upErr;
+
+        const { error: exErr } = await supabase.from("expenses").insert({
+          title,
+          category: "Salaries",
+          amount: Number(row.amount),
+          expense_date: bulkPayForm.paymentDate,
+          paid_to: teacherName,
+          payment_method: bulkPayForm.paymentMethod,
+          notes: "Bulk mark all paid (Teacher Salaries)",
+          added_by: user.id,
+        });
+        if (exErr) throw exErr;
+      }
+
+      toast.success(`Marked ${unpaidRows.length} salary record(s) as paid`);
+      setBulkPayOpen(false);
+      await load();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Bulk payment failed";
+      toast.error(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const badge = (row: SalaryRecordRow) => {
     if (row.status === "paid") {
-      return <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">PAID</span>;
+      return (
+        <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+          🟢 PAID
+        </span>
+      );
     }
-    const overdue = row.due_date < todayStr;
-    if (overdue) {
-      return <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-400">OVERDUE</span>;
-    }
-    return <span className="rounded-full bg-red-500/15 px-2.5 py-0.5 text-xs font-semibold text-red-600 dark:text-red-400">UNPAID</span>;
+    return (
+      <span className="rounded-full bg-red-500/15 px-2.5 py-0.5 text-xs font-semibold text-red-600 dark:text-red-400">
+        🔴 UNPAID
+      </span>
+    );
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
         <div>
-          <label className="label-text block">Month</label>
-          <select
-            className="mt-1 w-full max-w-xs rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent-blue)]"
-            value={monthYear}
-            onChange={(e) => setMonthYear(e.target.value)}
-          >
-            {monthOptions().map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+          <p className="text-sm text-[var(--text-muted)]">Current payroll period</p>
+          <p className="text-lg font-semibold text-[var(--text-primary)]">{monthYearLabel(curMonth, curYear)}</p>
+          {!loading && rows.length === 0 && (
+            <p className="mt-2 max-w-xl text-sm text-[var(--text-muted)]">
+              No payroll rows for this month yet. New teachers get an unpaid row when added; the monthly job also creates any missing rows.
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {(["all", "paid", "unpaid"] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              className={`rounded-lg px-3 py-1.5 text-sm capitalize ${
+                filter === f ? "bg-[var(--accent-blue)] text-white" : "bg-[var(--bg-surface-2)] text-[var(--text-primary)]"
+              }`}
+              onClick={() => setFilter(f)}
+            >
+              {f}
+            </button>
+          ))}
+          <Button type="button" variant="secondary" disabled={unpaidRows.length === 0 || submitting} onClick={() => setBulkPayOpen(true)}>
+            Mark all as paid
+          </Button>
+          <Link href="/teachers" className="inline-flex items-center rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm">
+            Teachers
+          </Link>
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {[
-          { label: "Total Salary This Month", value: formatCurrency(summary.total) },
-          { label: "Paid This Month", value: formatCurrency(summary.paid) },
-          { label: "Unpaid This Month", value: formatCurrency(summary.unpaid) },
-          { label: "Next Due Date", value: summary.dueLabel },
+          { label: "Total salary this month", value: formatCurrency(summary.total) },
+          { label: "Paid", value: formatCurrency(summary.paid) },
+          { label: "Unpaid", value: formatCurrency(summary.unpaid) },
         ].map((c) => (
           <article
             key={c.label}
@@ -271,31 +357,36 @@ export function TeacherSalariesModule() {
             <thead className="sticky top-0 z-[1]">
               <tr>
                 <th>Photo</th>
-                <th>Name</th>
-                <th>Designation</th>
+                <th>Teacher</th>
                 <th>Subject</th>
+                <th>Class</th>
                 <th>Salary</th>
-                <th>Month</th>
                 <th>Status</th>
-                <th>Due Date</th>
-                <th>Actions</th>
+                <th>Payment date</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center text-[var(--text-muted)]">
+                  <td colSpan={8} className="py-16 text-center text-[var(--text-muted)]">
                     <Loader2 className="mx-auto size-8 animate-spin opacity-60" />
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-[var(--text-muted)]">
-                    No salary records for this month. Add active teachers, then refresh.
+                  <td colSpan={8} className="py-12 text-center text-[var(--text-muted)]">
+                    No salary records for this month yet.
+                  </td>
+                </tr>
+              ) : filteredRows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-[var(--text-muted)]">
+                    No records for this filter.
                   </td>
                 </tr>
               ) : (
-                rows.map((row) => {
+                filteredRows.map((row) => {
                   const t = Array.isArray(row.teachers) ? row.teachers[0] : row.teachers;
                   return (
                     <tr key={row.id}>
@@ -303,16 +394,15 @@ export function TeacherSalariesModule() {
                         <ProfilePhoto src={t?.profile_photo ?? null} alt={t?.full_name ?? "Teacher"} size={40} />
                       </td>
                       <td className="font-medium">{t?.full_name ?? "—"}</td>
-                      <td>{t?.qualification?.trim() || "—"}</td>
                       <td>{t?.subject ?? "—"}</td>
-                      <td>{formatCurrency(Number(row.salary_amount))}</td>
-                      <td>{monthYearLabel(row.month_year)}</td>
+                      <td>{t?.class_assigned ?? "—"}</td>
+                      <td>{formatCurrency(Number(row.amount))}</td>
                       <td>{badge(row)}</td>
-                      <td>{formatShortDate(row.due_date)}</td>
+                      <td>{row.payment_date ? formatShortDate(row.payment_date) : "—"}</td>
                       <td>
                         {row.status === "unpaid" ? (
                           <Button type="button" className="px-3 py-1.5 text-xs" onClick={() => setPayRow(row)}>
-                            Mark as Paid
+                            Mark as paid
                           </Button>
                         ) : (
                           <Button
@@ -324,7 +414,7 @@ export function TeacherSalariesModule() {
                               setReceiptOpen(true);
                             }}
                           >
-                            View Receipt
+                            Print
                           </Button>
                         )}
                       </td>
@@ -337,7 +427,6 @@ export function TeacherSalariesModule() {
         </div>
       </div>
 
-      {/* Mark as paid modal */}
       {payRow && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
@@ -360,12 +449,12 @@ export function TeacherSalariesModule() {
               <p>
                 <span className="text-[var(--text-muted)]">Month</span>
                 <br />
-                <span className="font-medium text-[var(--text-primary)]">{monthYearLabel(payRow.month_year)}</span>
+                <span className="font-medium text-[var(--text-primary)]">{monthYearLabel(payRow.month, payRow.year)}</span>
               </p>
               <p>
                 <span className="text-[var(--text-muted)]">Amount</span>
                 <br />
-                <span className="font-medium text-[var(--text-primary)]">{formatCurrency(Number(payRow.salary_amount))}</span>
+                <span className="font-medium text-[var(--text-primary)]">{formatCurrency(Number(payRow.amount))}</span>
               </p>
               <Input
                 label="Payment date"
@@ -404,8 +493,53 @@ export function TeacherSalariesModule() {
                     Saving…
                   </>
                 ) : (
-                  "Confirm Payment"
+                  "Confirm payment"
                 )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkPayOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="presentation"
+          onClick={(e) => e.target === e.currentTarget && !submitting && setBulkPayOpen(false)}
+        >
+          <div className="surface-card w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">Mark all unpaid as paid</h2>
+            <p className="mt-2 text-sm text-[var(--text-muted)]">
+              Applies to {unpaidRows.length} teacher(s) for {monthYearLabel(curMonth, curYear)}. Each payment is logged as a separate expense.
+            </p>
+            <div className="mt-4 space-y-3">
+              <Input
+                label="Payment date"
+                type="date"
+                value={bulkPayForm.paymentDate}
+                onChange={(e) => setBulkPayForm((f) => ({ ...f, paymentDate: e.target.value }))}
+              />
+              <div className="space-y-1">
+                <label className="text-sm text-[var(--text-muted)]">Payment method</label>
+                <select
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 text-[var(--text-primary)]"
+                  value={bulkPayForm.paymentMethod}
+                  onChange={(e) =>
+                    setBulkPayForm((f) => ({ ...f, paymentMethod: e.target.value as typeof bulkPayForm.paymentMethod }))
+                  }
+                >
+                  <option value="Cash">Cash</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Cheque">Cheque</option>
+                </select>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button variant="secondary" type="button" disabled={submitting} onClick={() => setBulkPayOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="button" disabled={submitting} onClick={() => void confirmBulkPayment()}>
+                {submitting ? "Saving…" : "Confirm all"}
               </Button>
             </div>
           </div>
@@ -433,7 +567,10 @@ export function TeacherSalariesModule() {
                 </Button>
               </div>
             </div>
-            <div ref={printRef} className="print-salary-receipt rounded-lg border border-[var(--border)] bg-white p-6 text-black dark:bg-white">
+            <div
+              ref={printRef}
+              className="print-salary-receipt rounded-lg border border-[var(--border)] bg-white p-6 text-black dark:bg-white"
+            >
               <SalaryReceiptBody row={receiptRow} payerName={payerName} />
             </div>
           </div>
@@ -443,7 +580,7 @@ export function TeacherSalariesModule() {
   );
 }
 
-function SalaryReceiptBody({ row, payerName }: { row: TeacherSalaryRow; payerName: string }) {
+export function SalaryReceiptBody({ row, payerName }: { row: SalaryRecordRow; payerName: string }) {
   const t = Array.isArray(row.teachers) ? row.teachers[0] : row.teachers;
   if (!t) return null;
   return (
@@ -452,12 +589,12 @@ function SalaryReceiptBody({ row, payerName }: { row: TeacherSalaryRow; payerNam
       <p className="text-center text-xs uppercase tracking-widest">Salary payment receipt</p>
       <hr className="my-4 border-black" />
       <p>
-        <strong>Receipt No:</strong> {receiptNumber(row)}
+        <strong>Receipt No:</strong> {salaryReceiptNumber(row)}
       </p>
       <p>
         <strong>Date:</strong>{" "}
-        {row.paid_date
-          ? new Date(row.paid_date + "T12:00:00").toLocaleDateString("en-GB", {
+        {row.payment_date
+          ? new Date(`${row.payment_date}T12:00:00`).toLocaleDateString("en-GB", {
               day: "2-digit",
               month: "short",
               year: "numeric",
@@ -475,11 +612,11 @@ function SalaryReceiptBody({ row, payerName }: { row: TeacherSalaryRow; payerNam
         <strong>Subject:</strong> {t.subject}
       </p>
       <p>
-        <strong>Month:</strong> {monthYearLabel(row.month_year)}
+        <strong>Month:</strong> {monthYearLabel(row.month, row.year)}
       </p>
       <hr className="my-4 border-black" />
       <p>
-        <strong>Salary Amount:</strong> {formatCurrency(Number(row.salary_amount))}
+        <strong>Salary Amount:</strong> {formatCurrency(Number(row.amount))}
       </p>
       <p>
         <strong>Payment Method:</strong> {row.payment_method ?? "—"}

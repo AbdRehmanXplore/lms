@@ -123,7 +123,7 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
         address: values.address,
         phone: values.phone,
         email: values.email || null,
-        admission_date: values.admissionDate || null,
+        admission_date: values.admissionDate,
         status: values.status,
       };
 
@@ -235,7 +235,7 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
         <Input label="Email" type="email" {...form.register("email")} error={form.formState.errors.email?.message} />
         <div className="space-y-1">
           <label htmlFor="admissionDate" className="text-sm text-slate-300">
-            Admission Date
+            Admission Date *
           </label>
           <input
             id="admissionDate"
@@ -243,6 +243,9 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
             className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 outline-none ring-blue-500 focus:ring-2"
             {...form.register("admissionDate")}
           />
+          {form.formState.errors.admissionDate && (
+            <p className="text-xs text-red-400">{form.formState.errors.admissionDate.message}</p>
+          )}
         </div>
         <div className="space-y-1">
           <label className="text-sm text-slate-300">Status</label>
@@ -257,6 +260,7 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
       <div className="space-y-3 rounded-xl border border-slate-700 p-4">
         <p className="text-sm font-medium text-slate-200">Student Profile Photo</p>
         <div className="flex items-center gap-4">
+          {/* eslint-disable-next-line react-hooks/incompatible-library -- RHF watch() for live initials preview */}
           <ProfilePhoto src={photoPreview} alt="Student" name={form.watch("fullName")} size={72} />
           <label className="cursor-pointer rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800">
             Choose photo

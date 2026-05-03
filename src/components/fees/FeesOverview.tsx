@@ -270,7 +270,7 @@ export function FeesOverview() {
         const baseMonth = selectedVoucher.month.replace(/\s*\(Remaining\)\s*$/i, "").trim();
         const issueDate = new Date().toISOString().slice(0, 10);
 
-        let vnRemain = `${selectedVoucher.voucher_number}-R`;
+        const vnRemain = `${selectedVoucher.voucher_number}-R`;
         let insertPayload = {
           student_id: selectedVoucher.student_id,
           voucher_number: vnRemain,

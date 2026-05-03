@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { getStatusBadgeVariant } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
+import { scheduleEffectLoad } from "@/lib/utils/scheduleEffectLoad";
 
 type SalaryVoucher = {
   id: string;
@@ -45,7 +46,7 @@ export function SalaryVoucherDetail({ id }: SalaryVoucherDetailProps) {
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [receivedBy, setReceivedBy] = useState("");
 
-  const loadVoucher = async () => {
+  const loadVoucher = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
       .from("salary_vouchers")
@@ -72,11 +73,13 @@ export function SalaryVoucherDetail({ id }: SalaryVoucherDetailProps) {
       } as SalaryVoucher);
     }
     setLoading(false);
-  };
+  }, [supabase, id]);
 
   useEffect(() => {
-    void loadVoucher();
-  }, [id]);
+    return scheduleEffectLoad(() => {
+      void loadVoucher();
+    });
+  }, [loadVoucher]);
 
   const markAsPaid = async () => {
     if (!voucher) return;

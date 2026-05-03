@@ -10,20 +10,23 @@
 
 ## PROJECT CURRENT STATUS
 
-*Updated to match the repository (April 2026). Revisit this section when the app changes.*
+*Updated to match the repository (May 2026). Revisit this section when the app changes.*
 
 ### Completed (built and in use)
 
+- **Joining & admission dates:** Teachers have required **Joining Date** (default today) saved to `teachers.joining_date`; students have required **Admission Date** (default today) saved to `students.admission_date`. Detail pages show formatted dates, duration (years + months), and teacher **Salary** tab + student **Fees** tab with current-month fee status, history, outstanding total, and manual **Generate voucher** for the current month when missing.
+- **Monthly automation (Supabase):** Script `supabase/monthly_reset_salary_records.sql` adds `salary_records`, `generate_monthly_fee_vouchers()`, and **`generate_monthly_salaries()`** (zero-arg: unpaid `salary_records` for each **active** teacher **except** those whose **`joining_date`** falls in the **current** calendar month—first row appears on the **1st of next month**). **pg_cron** comments are in that file. **No** `salary_records` row is created when adding a teacher in-app. Optional one-time cleanup: `supabase/salary_records_joining_cleanup.sql` (drops `is_joining_month` if it ever existed). New students still do **not** get an automatic fee voucher for the join month.
+- **Teacher salaries UI:** `/salaries` lists **only teachers who already have a `salary_records` row** for the selected calendar month (no client seeding of missing rows). Teacher list badge reads from `salary_records` only. Teacher detail **Salary** tab shows a clear empty state when there are no rows yet. Mark paid / bulk paid / dashboard salary-due unchanged in spirit.
 - **Auth & access:** Login and register, Supabase session, middleware protection of dashboard routes.
 - **Branding:** School name and `SchoolLogo` on login, sidebar, and print-oriented components.
 - **Dashboard:** Live stats, fee vs expense area chart, class distribution and attendance trends, “fee by class” table, search (Ctrl+K), fee defaulters snapshot, quick actions, teacher attendance summary.
 - **Classes:** 13-class overview, per-class student table with search, link to add student.
-- **Teachers:** List, add/edit, profile photo to storage, detail with salary/attendance context, salary module (`/finance/salaries`, related salary routes).
+- **Teachers:** List, add/edit, profile photo to storage, detail with salary/attendance context, salary module (`/salaries`, `/finance/salaries` redirect, legacy `/salaries/add` voucher routes if present).
 - **Students:** List with Student ID, CRUD, auto `SMS-YYYY-XXXX` UID, profile photo, detail with fee history and attendance counts, delete with confirm.
 - **Results:** Per-class flow, 7 subjects, grades, save/update, generated list, print card.
 - **Fees:** Unpaid/paid/defaulters tabs, search/filter, **partial payments** (columns `amount_paid`, `remaining_amount`, `is_partial`; status `partial`; remainder vouchers `*-R` / month suffix `(Remaining)`), mark payment modal with amount validation, defaulter flag + WhatsApp reminders, bulk class voucher generation, voucher detail/print receipts (paid full vs partial).
 - **Student attendance** and **attendance history** pages.
-- **Teacher attendance** (today, history, leaves) and dashboard-relevant stats.
+- **Teacher attendance** (today with auto entry/exit times, history with daily times/hours, leaves) and dashboard-relevant stats (first/last arrival).
 - **Timetable**, **admit cards**, **expenses** (summary + Recharts), **monthly** and **yearly** history.
 - **Announcements** and **Settings**.
 
@@ -39,6 +42,19 @@
 
 - **Next.js 16** may log a **deprecation** about the `middleware` file name (suggests `proxy`); the build still completes successfully.
 - The **reference SQL** block below may still define `whatsapp_reminders` and `whatsapp_reminder_log` for **legacy databases**. The **application does not use** WhatsApp or those tables.
+
+### Database: `salary_records` & monthly automation
+
+Run in Supabase (after `partial_payment.sql`, `fee_voucher_allocate.sql`): **`supabase/monthly_reset_salary_records.sql`**.
+
+| Object | Purpose |
+|--------|---------|
+| **`salary_records`** | One row per teacher per calendar month (`month` = English full name, `year` text), `amount`, `status` `paid`/`unpaid`, optional `payment_date`, `payment_method`, `paid_by`. |
+| **`generate_monthly_fee_vouchers()`** | On the 1st (via cron): for each **active** student with a **class**, inserts an **unpaid** `fee_vouchers` row for **`to_char(now(), 'FMMonth YYYY')`** if none exists (default amount 2500, partial-payment columns set). |
+| **`generate_monthly_salaries()`** (zero-arg) | On the 1st (via cron): inserts an **unpaid** `salary_records` row for current month/year when missing; **skips** teachers whose `joining_date` is in the **same** calendar month (first payroll row next month). If you also deploy legacy **`generate_monthly_salaries(text)`** from `teacher_salaries.sql`, both can coexist; if PostgREST RPC is ambiguous, rename or drop the legacy overload. |
+| **`salary_records_joining_cleanup.sql`** | Optional: remove `is_joining_month` rows/column if present. |
+| **pg_cron** | Uncomment the two `cron.schedule(...)` blocks at the bottom of that script after enabling the **pg_cron** extension in the project Dashboard. |
+| **`teacher_attendance_time_columns.sql`** | Ensures `check_in_time`, `check_out_time`, and optional `check_in_date` exist on `teacher_attendance` for entry/exit tracking. |
 
 ### Known bugs fixed (recent)
 
@@ -657,10 +673,10 @@ lib/
 - [ ] Student **detail** page: attendance **calendar** + deep monthly breakdown (not on student profile; history is global/role workflow)
 
 ### 9. TEACHER ATTENDANCE (/teacher-attendance)
-- [x] Tab 1 — Today: mark Present/Absent/Late/Leave
-- [x] Tab 2 — History: monthly + drill-down
+- [x] Tab 1 — Today: mark Present/Absent/Late/Leave with **auto entry time** on Present/Late (instant save), **Mark exit** for checkout time, editable `<input type="time">` (stored HH:MM:SS)
+- [x] Tab 2 — History: monthly rollup + **daily log** (date, day, status, entry, exit, hours, remarks) when a teacher is selected; drill-down modal includes times
 - [x] Tab 3 — Leaves: apply / approve / reject
-- [x] Dashboard: teacher attendance summary (see dashboard note in §2)
+- [x] Dashboard: teacher attendance % plus **Present | Absent | Late | On leave** counts and **first / last arrival** with 12h time
 
 ### 10. TIMETABLE (/timetable)
 - [x] Class selector
@@ -754,7 +770,7 @@ Font Body:      DM Sans
   ├── Fees Overview
   ├── Generate Voucher
   ├── Fee Defaulters
-  └── Teacher Salaries
+  └── Teacher Salaries (/salaries)
 📊 Expenses
 ─────────────────
 📅 Student Attendance
@@ -801,6 +817,20 @@ Make sure ALL of these are true before considering the project done:
 - [x] Sidebar behavior improved: stays fixed/sticky while content scrolls
 - [x] Day-mode form readability improved globally (removed harsh black form blocks; standardized text/placeholder/autofill/select colors)
 - [x] Build verification completed after each major change (`npm run build` successful)
+- [x] Teacher joining date display + joining date on add/edit forms (`teachers.joining_date`)
+- [x] Student admission date display + required admission date on add/edit (`students.admission_date`)
+- [x] Duration calculation on teacher/student detail pages (`formatDurationYearsMonths`)
+- [x] Monthly auto fee voucher generation (`generate_monthly_fee_vouchers` + pg_cron instructions in SQL file)
+- [x] Monthly auto salary generation (`generate_monthly_salaries()` + pg_cron instructions in SQL file; skips joining month)
+- [x] New teacher joining month = **no** `salary_records` row from the app; first row on **1st of next month** (unpaid)
+- [x] Teacher salary management UI (badges, `/salaries`, detail Salary tab, mark paid + print)
+- [x] Salary history per teacher (`salary_records`)
+- [x] Teacher entry time auto-fills when marked present/late (`teacher_attendance.check_in_time`, instant save)
+- [x] Teacher exit time auto-fills when **Mark exit** is clicked (`check_out_time`, editable time inputs, 12h display)
+- [x] Hours worked auto-calculated from entry/exit (`workDurationLabel` on detail + history views)
+- [x] Time tracking on teacher detail **Attendance** tab (daily table for selected month)
+- [x] Teacher attendance **History** tab: daily log with entry/exit/hours when a teacher is selected; drill-down modal includes times
+- [x] Dashboard teacher widget: Present/Absent/Late/Leave counts + first/last arrival with time (`supabase/teacher_attendance_time_columns.sql` for `check_in_date` if used)
 
 ### UI & UX
 - [ ] Loading **skeletons** (most screens use "Loading…" text)

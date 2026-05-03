@@ -18,11 +18,11 @@ export type TeacherRow = {
   profile_photo: string | null;
 };
 
-type Props = { teachers: TeacherRow[] };
+type Props = { teachers: TeacherRow[]; salaryMonthStatus?: Record<string, "paid" | "unpaid"> };
 
 const PAGE_SIZE = 10;
 
-export function TeacherTable({ teachers }: Props) {
+export function TeacherTable({ teachers, salaryMonthStatus }: Props) {
   const [search, setSearch] = useState("");
   const [subjectFilter, setSubjectFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">("");
@@ -74,6 +74,7 @@ export function TeacherTable({ teachers }: Props) {
               <th className="p-3">Class</th>
               <th className="p-3">Salary</th>
               <th className="p-3">Status</th>
+              <th className="p-3">Salary</th>
               <th className="p-3">Actions</th>
             </tr>
           </thead>
@@ -89,6 +90,15 @@ export function TeacherTable({ teachers }: Props) {
                 <td className="p-3">{t.class_assigned ?? "—"}</td>
                 <td className="p-3">{formatCurrency(Number(t.salary))}</td>
                 <td className="p-3 capitalize">{t.status}</td>
+                <td className="p-3">
+                  {salaryMonthStatus?.[t.id] === "paid" ? (
+                    <span className="text-xs font-semibold text-emerald-400">🟢 PAID</span>
+                  ) : salaryMonthStatus?.[t.id] === "unpaid" ? (
+                    <span className="text-xs font-semibold text-red-400">🔴 UNPAID</span>
+                  ) : (
+                    <span className="text-xs text-slate-500">—</span>
+                  )}
+                </td>
                 <td className="p-3">
                   <Link href={`/teachers/${t.id}`} className="text-blue-400 hover:underline">
                     View

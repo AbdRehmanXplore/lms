@@ -1,13 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useReactToPrint } from "react-to-print";
-import { useRef } from "react";
 import { toast } from "sonner";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
+import {
+  dbTimeToInputValue,
+  formatDbTimeTo12h,
+  inputTimeToDb,
+  nowDbTime,
+  workDurationLabel,
+} from "@/lib/utils/teacherAttendanceTime";
+import { scheduleEffectLoad } from "@/lib/utils/scheduleEffectLoad";
 
 type TeacherRow = {
   id: string;
@@ -18,6 +25,16 @@ type TeacherRow = {
 };
 
 type Status = "present" | "absent" | "late" | "leave";
+type MarkStatus = Status | null;
+
+type AttRow = {
+  teacher_id: string;
+  date: string;
+  status: string;
+  check_in_time: string | null;
+  check_out_time: string | null;
+  remarks: string | null;
+};
 
 type MonthlyRow = {
   teacher_id: string;
@@ -32,12 +49,28 @@ type MonthlyRow = {
   attendance_percentage: number;
 };
 
+type DayDetailRow = {
+  date: string;
+  status: string;
+  check_in_time: string | null;
+  check_out_time: string | null;
+  remarks: string | null;
+};
+
 const LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave", "Other"] as const;
 
 function pctColor(p: number) {
   if (p >= 90) return "text-emerald-400";
   if (p >= 75) return "text-amber-400";
   return "text-red-400";
+}
+
+function dayNameShort(iso: string) {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", { weekday: "short" });
+}
+
+function dayOfMonth(iso: string) {
+  return String(new Date(`${iso}T12:00:00`).getDate()).padStart(2, "0");
 }
 
 export function TeacherAttendanceModule() {
@@ -48,17 +81,19 @@ export function TeacherAttendanceModule() {
   const [tab, setTab] = useState<"mark" | "history" | "leaves">("mark");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
-  const [statusMap, setStatusMap] = useState<Record<string, Status>>({});
+  const [statusMap, setStatusMap] = useState<Record<string, MarkStatus>>({});
   const [checkIn, setCheckIn] = useState<Record<string, string>>({});
+  const [checkOut, setCheckOut] = useState<Record<string, string>>({});
   const [remarks, setRemarks] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
 
   const [histMonth, setHistMonth] = useState(String(new Date().getMonth() + 1).padStart(2, "0"));
   const [histYear, setHistYear] = useState(String(new Date().getFullYear()));
   const [histTeacher, setHistTeacher] = useState<string>("");
   const [monthlyRows, setMonthlyRows] = useState<MonthlyRow[]>([]);
+  const [dailyLogRows, setDailyLogRows] = useState<DayDetailRow[]>([]);
   const [detailOpen, setDetailOpen] = useState<{ teacherId: string; name: string } | null>(null);
-  const [detailRows, setDetailRows] = useState<{ date: string; status: string }[]>([]);
+  const [detailRows, setDetailRows] = useState<DayDetailRow[]>([]);
 
   const [leaveTeacher, setLeaveTeacher] = useState("");
   const [leaveType, setLeaveType] = useState<string>("Casual Leave");
@@ -79,75 +114,227 @@ export function TeacherAttendanceModule() {
       .order("full_name");
     setTeachers((t ?? []) as TeacherRow[]);
     const { data: att } = await supabase.from("teacher_attendance").select("*").eq("date", date);
-    const sm: Record<string, Status> = {};
+    const sm: Record<string, MarkStatus> = {};
     const ci: Record<string, string> = {};
+    const co: Record<string, string> = {};
     const rm: Record<string, string> = {};
     (t ?? []).forEach((row: TeacherRow) => {
-      const rowA = (att ?? []).find((a: { teacher_id: string }) => a.teacher_id === row.id);
-      sm[row.id] = (rowA?.status as Status) ?? "present";
-      ci[row.id] = rowA?.check_in_time ? String(rowA.check_in_time).slice(0, 5) : "";
+      const rowA = (att ?? []).find((a: AttRow) => a.teacher_id === row.id);
+      sm[row.id] = rowA ? (rowA.status as Status) : null;
+      ci[row.id] = rowA?.check_in_time ? dbTimeToInputValue(rowA.check_in_time) : "";
+      co[row.id] = rowA?.check_out_time ? dbTimeToInputValue(rowA.check_out_time) : "";
       rm[row.id] = rowA?.remarks ?? "";
     });
     setStatusMap(sm);
     setCheckIn(ci);
+    setCheckOut(co);
     setRemarks(rm);
   }, [date, supabase]);
 
   useEffect(() => {
-    void loadTeachersMark();
+    return scheduleEffectLoad(() => {
+      void loadTeachersMark();
+    });
   }, [loadTeachersMark]);
 
   useEffect(() => {
-    void supabase.auth.getUser().then(({ data }) => {
-      const id = data.user?.id;
-      if (!id) return;
-      void supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", id)
-        .maybeSingle()
-        .then(({ data: p }) => setProfileRole((p?.role as string) ?? null));
+    const cancel: { v: boolean } = { v: false };
+    const cleanup = scheduleEffectLoad(() => {
+      void supabase.auth.getUser().then(({ data }) => {
+        const id = data.user?.id;
+        if (!id || cancel.v) return;
+        void supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", id)
+          .maybeSingle()
+          .then(({ data: p }) => {
+            if (!cancel.v) setProfileRole((p?.role as string) ?? null);
+          });
+      });
     });
+    return () => {
+      cancel.v = true;
+      cleanup();
+    };
   }, [supabase]);
 
-  const submitAll = async () => {
-    setSaving(true);
+  const getMarkedBy = useCallback(async () => {
     const { data: userData } = await supabase.auth.getUser();
-    const markedBy = userData.user?.id ?? null;
-    const rows = teachers.map((t) => ({
-      teacher_id: t.id,
-      date,
-      status: statusMap[t.id] ?? "present",
-      check_in_time: checkIn[t.id]?.trim() ? `${checkIn[t.id].trim()}:00` : null,
-      check_out_time: null,
-      remarks: remarks[t.id]?.trim() || null,
-      marked_by: markedBy,
-    }));
-    const { error } = await supabase.from("teacher_attendance").upsert(rows, {
-      onConflict: "teacher_id,date",
-    });
-    setSaving(false);
-    if (error) {
-      toast.error(error.message);
+    return userData.user?.id ?? null;
+  }, [supabase]);
+
+  const upsertAttendance = useCallback(
+    async (
+      teacherId: string,
+      payload: {
+        status: Status;
+        check_in_time: string | null;
+        check_out_time: string | null;
+        remarks?: string | null;
+      },
+    ) => {
+      setSavingId(teacherId);
+      try {
+        const markedBy = await getMarkedBy();
+        const remarksVal = payload.remarks !== undefined ? payload.remarks : remarks[teacherId]?.trim() || null;
+        const row = {
+          teacher_id: teacherId,
+          date,
+          status: payload.status,
+          check_in_time: payload.check_in_time,
+          check_out_time: payload.check_out_time,
+          remarks: remarksVal,
+          marked_by: markedBy,
+          check_in_date: date,
+        };
+        const { error } = await supabase.from("teacher_attendance").upsert(row, { onConflict: "teacher_id,date" });
+        if (error) throw error;
+        toast.success("Saved");
+        await loadTeachersMark();
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "Save failed");
+      } finally {
+        setSavingId(null);
+      }
+    },
+    [date, remarks, supabase, loadTeachersMark, getMarkedBy],
+  );
+
+  const onStatusClick = async (teacherId: string, status: Status) => {
+    if (status === "present" || status === "late") {
+      if (statusMap[teacherId] === status && checkIn[teacherId]) {
+        return;
+      }
+      const tIn = nowDbTime();
+      setStatusMap((prev) => ({ ...prev, [teacherId]: status }));
+      setCheckIn((prev) => ({ ...prev, [teacherId]: dbTimeToInputValue(tIn) }));
+      await upsertAttendance(teacherId, {
+        status,
+        check_in_time: tIn,
+        check_out_time: inputTimeToDb(checkOut[teacherId] ?? "") ?? null,
+      });
       return;
     }
-    toast.success("Attendance saved");
-    void loadTeachersMark();
+    setStatusMap((prev) => ({ ...prev, [teacherId]: status }));
+    setCheckIn((prev) => ({ ...prev, [teacherId]: "" }));
+    setCheckOut((prev) => ({ ...prev, [teacherId]: "" }));
+    await upsertAttendance(teacherId, {
+      status,
+      check_in_time: null,
+      check_out_time: null,
+    });
+  };
+
+  const onMarkExit = async (teacherId: string) => {
+    const st = statusMap[teacherId];
+    if (st !== "present" && st !== "late") return;
+    const tOut = nowDbTime();
+    setCheckOut((prev) => ({ ...prev, [teacherId]: dbTimeToInputValue(tOut) }));
+    setSavingId(teacherId);
+    try {
+      const markedBy = await getMarkedBy();
+      const ciDb = inputTimeToDb(checkIn[teacherId] ?? "");
+      const { error } = await supabase
+        .from("teacher_attendance")
+        .upsert(
+          {
+            teacher_id: teacherId,
+            date,
+            status: st,
+            check_in_time: ciDb,
+            check_out_time: tOut,
+            remarks: remarks[teacherId]?.trim() || null,
+            marked_by: markedBy,
+            check_in_date: date,
+          },
+          { onConflict: "teacher_id,date" },
+        );
+      if (error) throw error;
+      toast.success("Exit time saved");
+      await loadTeachersMark();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const saveTimesFor = async (teacherId: string) => {
+    const st = statusMap[teacherId];
+    if (st !== "present" && st !== "late") return;
+    setSavingId(teacherId);
+    try {
+      const markedBy = await getMarkedBy();
+      const ci = inputTimeToDb(checkIn[teacherId] ?? "");
+      const co = inputTimeToDb(checkOut[teacherId] ?? "");
+      const { error } = await supabase
+        .from("teacher_attendance")
+        .upsert(
+          {
+            teacher_id: teacherId,
+            date,
+            status: st,
+            check_in_time: ci,
+            check_out_time: co,
+            remarks: remarks[teacherId]?.trim() || null,
+            marked_by: markedBy,
+            check_in_date: date,
+          },
+          { onConflict: "teacher_id,date" },
+        );
+      if (error) throw error;
+      toast.success("Times updated");
+      await loadTeachersMark();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const saveRemarksFor = async (teacherId: string, text: string) => {
+    const st = statusMap[teacherId];
+    if (!st) return;
+    try {
+      const markedBy = await getMarkedBy();
+      const { error } = await supabase
+        .from("teacher_attendance")
+        .upsert(
+          {
+            teacher_id: teacherId,
+            date,
+            status: st,
+            check_in_time: inputTimeToDb(checkIn[teacherId] ?? ""),
+            check_out_time: inputTimeToDb(checkOut[teacherId] ?? ""),
+            remarks: text.trim() || null,
+            marked_by: markedBy,
+            check_in_date: date,
+          },
+          { onConflict: "teacher_id,date" },
+        );
+      if (error) throw error;
+      await loadTeachersMark();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Save failed");
+    }
   };
 
   const counts = useMemo(() => {
     let present = 0,
       absent = 0,
       late = 0,
-      leave = 0;
+      leave = 0,
+      unset = 0;
     teachers.forEach((t) => {
-      const s = statusMap[t.id] ?? "present";
-      if (s === "present") present += 1;
-      if (s === "absent") absent += 1;
-      if (s === "late") late += 1;
-      if (s === "leave") leave += 1;
+      const s = statusMap[t.id];
+      if (!s) unset += 1;
+      else if (s === "present") present += 1;
+      else if (s === "absent") absent += 1;
+      else if (s === "late") late += 1;
+      else if (s === "leave") leave += 1;
     });
-    return { present, absent, late, leave };
+    return { present, absent, late, leave, unset };
   }, [teachers, statusMap]);
 
   const loadMonthly = useCallback(async () => {
@@ -162,9 +349,41 @@ export function TeacherAttendanceModule() {
     setMonthlyRows((data ?? []) as MonthlyRow[]);
   }, [histMonth, histYear, histTeacher, supabase]);
 
+  const loadDailyLog = useCallback(async () => {
+    if (!histTeacher) {
+      setDailyLogRows([]);
+      return;
+    }
+    const my = `${histYear}-${histMonth.padStart(2, "0")}`;
+    const start = `${my}-01`;
+    const end = new Date(Number(histYear), Number(histMonth), 0).toISOString().slice(0, 10);
+    const { data, error } = await supabase
+      .from("teacher_attendance")
+      .select("date,status,check_in_time,check_out_time,remarks")
+      .eq("teacher_id", histTeacher)
+      .gte("date", start)
+      .lte("date", end)
+      .order("date");
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setDailyLogRows((data ?? []) as DayDetailRow[]);
+  }, [histMonth, histYear, histTeacher, supabase]);
+
   useEffect(() => {
-    if (tab === "history") void loadMonthly();
+    if (tab !== "history") return;
+    return scheduleEffectLoad(() => {
+      void loadMonthly();
+    });
   }, [tab, loadMonthly]);
+
+  useEffect(() => {
+    if (tab !== "history") return;
+    return scheduleEffectLoad(() => {
+      void loadDailyLog();
+    });
+  }, [tab, loadDailyLog]);
 
   const openDetail = async (teacherId: string, name: string) => {
     const my = `${histYear}-${histMonth.padStart(2, "0")}`;
@@ -172,12 +391,12 @@ export function TeacherAttendanceModule() {
     const end = new Date(Number(histYear), Number(histMonth), 0).toISOString().slice(0, 10);
     const { data } = await supabase
       .from("teacher_attendance")
-      .select("date,status")
+      .select("date,status,check_in_time,check_out_time,remarks")
       .eq("teacher_id", teacherId)
       .gte("date", start)
       .lte("date", end)
       .order("date");
-    setDetailRows((data ?? []) as { date: string; status: string }[]);
+    setDetailRows((data ?? []) as DayDetailRow[]);
     setDetailOpen({ teacherId, name });
   };
 
@@ -257,26 +476,27 @@ export function TeacherAttendanceModule() {
             </div>
           </div>
           <p className="text-sm text-slate-400">
-            Present {counts.present} | Absent {counts.absent} | Late {counts.late} | On leave {counts.leave}
+            Today: {counts.present} Present | {counts.absent} Absent | {counts.late} Late | {counts.leave} On leave
+            {counts.unset > 0 ? ` · ${counts.unset} not marked` : ""}
           </p>
           <div className="overflow-x-auto rounded-xl border border-slate-700">
-            <table className="w-full min-w-[960px] text-sm">
+            <table className="w-full min-w-[1100px] text-sm">
               <thead className="bg-slate-800/80">
                 <tr>
                   <th className="p-2">Photo</th>
                   <th className="p-2 text-left">Name</th>
                   <th className="p-2 text-left">Subject</th>
-                  <th className="p-2">Present</th>
-                  <th className="p-2">Absent</th>
-                  <th className="p-2">Late</th>
-                  <th className="p-2">Leave</th>
-                  <th className="p-2">Check-in</th>
+                  <th className="p-2 text-left">Status</th>
+                  <th className="p-2 text-left">Entry time</th>
+                  <th className="p-2 text-left">Exit time</th>
                   <th className="p-2 text-left">Remarks</th>
                 </tr>
               </thead>
               <tbody>
                 {teachers.map((t) => {
-                  const st = statusMap[t.id] ?? "present";
+                  const st = statusMap[t.id];
+                  const showTimes = st === "present" || st === "late";
+                  const busy = savingId === t.id;
                   return (
                     <tr key={t.id} className="border-t border-slate-700">
                       <td className="p-2">
@@ -284,32 +504,91 @@ export function TeacherAttendanceModule() {
                       </td>
                       <td className="p-2">{t.full_name ?? t.employee_code}</td>
                       <td className="p-2">{t.subject}</td>
-                      {(["present", "absent", "late", "leave"] as const).map((k) => (
-                        <td key={k} className="p-2 text-center">
+                      <td className="p-2">
+                        <div className="flex flex-wrap gap-1">
                           <button
                             type="button"
-                            className={`rounded px-2 py-1 text-xs ${
-                              st === k ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-400"
-                            }`}
-                            onClick={() => setStatusMap((prev) => ({ ...prev, [t.id]: k }))}
+                            disabled={busy}
+                            className={`rounded px-2 py-1 text-xs ${st === "present" ? "bg-emerald-700 text-white" : "bg-slate-800 text-slate-300"}`}
+                            onClick={() => void onStatusClick(t.id, "present")}
                           >
-                            {k === "present" ? "✓" : k === "absent" ? "✗" : k === "late" ? "⏰" : "🏖️"}
+                            ✓ Present
                           </button>
-                        </td>
-                      ))}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className={`rounded px-2 py-1 text-xs ${st === "absent" ? "bg-red-700 text-white" : "bg-slate-800 text-slate-300"}`}
+                            onClick={() => void onStatusClick(t.id, "absent")}
+                          >
+                            ✗ Absent
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className={`rounded px-2 py-1 text-xs ${st === "late" ? "bg-amber-700 text-white" : "bg-slate-800 text-slate-300"}`}
+                            onClick={() => void onStatusClick(t.id, "late")}
+                          >
+                            ⏰ Late
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className={`rounded px-2 py-1 text-xs ${st === "leave" ? "bg-violet-700 text-white" : "bg-slate-800 text-slate-300"}`}
+                            onClick={() => void onStatusClick(t.id, "leave")}
+                          >
+                            🏖️ Leave
+                          </button>
+                        </div>
+                      </td>
                       <td className="p-2">
-                        <input
-                          type="time"
-                          className="w-full min-w-[100px] rounded border border-slate-600 bg-slate-900 px-1 py-1"
-                          value={checkIn[t.id] ?? ""}
-                          onChange={(e) => setCheckIn((prev) => ({ ...prev, [t.id]: e.target.value }))}
-                        />
+                        {showTimes ? (
+                          <div className="space-y-1">
+                            <p className="text-xs text-slate-500">{formatDbTimeTo12h(inputTimeToDb(checkIn[t.id] ?? "") ?? null)}</p>
+                            <input
+                              type="time"
+                              step={1}
+                              className="w-full min-w-[110px] rounded border border-slate-600 bg-slate-900 px-1 py-1"
+                              value={checkIn[t.id] ?? ""}
+                              onChange={(e) => setCheckIn((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                              onBlur={() => void saveTimesFor(t.id)}
+                            />
+                          </div>
+                        ) : (
+                          <span className="text-slate-500">—</span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        {showTimes ? (
+                          <div className="flex flex-col gap-1">
+                            {checkOut[t.id] ? (
+                              <p className="text-xs text-slate-500">{formatDbTimeTo12h(inputTimeToDb(checkOut[t.id] ?? "") ?? null)}</p>
+                            ) : (
+                              <span className="text-xs text-slate-500">—</span>
+                            )}
+                            <input
+                              type="time"
+                              step={1}
+                              className="w-full min-w-[110px] rounded border border-slate-600 bg-slate-900 px-1 py-1"
+                              value={checkOut[t.id] ?? ""}
+                              onChange={(e) => setCheckOut((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                              onBlur={() => void saveTimesFor(t.id)}
+                            />
+                            <Button type="button" className="mt-1 w-full px-2 py-1 text-xs" disabled={busy} onClick={() => void onMarkExit(t.id)}>
+                              Mark exit
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-slate-500">—</span>
+                        )}
                       </td>
                       <td className="p-2">
                         <input
                           className="w-full min-w-[120px] rounded border border-slate-600 bg-slate-900 px-2 py-1"
                           value={remarks[t.id] ?? ""}
                           onChange={(e) => setRemarks((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                          onBlur={(e) => {
+                            if (statusMap[t.id]) void saveRemarksFor(t.id, e.target.value);
+                          }}
                         />
                       </td>
                     </tr>
@@ -318,9 +597,6 @@ export function TeacherAttendanceModule() {
               </tbody>
             </table>
           </div>
-          <Button type="button" disabled={saving} onClick={() => void submitAll()}>
-            {saving ? "Saving…" : "Submit all"}
-          </Button>
         </div>
       )}
 
@@ -399,6 +675,40 @@ export function TeacherAttendanceModule() {
                 ))}
               </tbody>
             </table>
+
+            {histTeacher && dailyLogRows.length > 0 && (
+              <div className="mt-6 space-y-2">
+                <h3 className="text-md font-semibold print:text-black">Daily log (selected teacher)</h3>
+                <div className="overflow-x-auto rounded-lg border border-slate-600 print:border-black">
+                  <table className="w-full min-w-[720px] text-sm print:text-black">
+                    <thead className="bg-slate-800/80 print:bg-white">
+                      <tr>
+                        <th className="p-2 text-left">Date</th>
+                        <th className="p-2 text-left">Day</th>
+                        <th className="p-2 text-left">Status</th>
+                        <th className="p-2 text-left">Entry</th>
+                        <th className="p-2 text-left">Exit</th>
+                        <th className="p-2 text-left">Hours</th>
+                        <th className="p-2 text-left">Remarks</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dailyLogRows.map((r) => (
+                        <tr key={r.date} className="border-t border-slate-700 print:border-black">
+                          <td className="p-2">{dayOfMonth(r.date)}</td>
+                          <td className="p-2">{dayNameShort(r.date)}</td>
+                          <td className="p-2 capitalize">{r.status}</td>
+                          <td className="p-2">{formatDbTimeTo12h(r.check_in_time)}</td>
+                          <td className="p-2">{formatDbTimeTo12h(r.check_out_time)}</td>
+                          <td className="p-2">{workDurationLabel(r.check_in_time, r.check_out_time)}</td>
+                          <td className="p-2 text-slate-400">{r.remarks ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -516,14 +826,34 @@ export function TeacherAttendanceModule() {
       )}
 
       <Modal open={!!detailOpen} title={detailOpen ? `${detailOpen.name} — days` : ""} onClose={() => setDetailOpen(null)}>
-        <ul className="max-h-72 space-y-1 overflow-auto text-sm">
-          {detailRows.map((r) => (
-            <li key={r.date} className="flex justify-between border-b border-slate-700 py-1">
-              <span>{r.date}</span>
-              <span className="capitalize text-slate-300">{r.status}</span>
-            </li>
-          ))}
-        </ul>
+        <div className="max-h-[70vh] overflow-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-600 text-left text-slate-400">
+                <th className="p-2">Date</th>
+                <th className="p-2">Day</th>
+                <th className="p-2">Status</th>
+                <th className="p-2">Entry</th>
+                <th className="p-2">Exit</th>
+                <th className="p-2">Hours</th>
+                <th className="p-2">Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detailRows.map((r) => (
+                <tr key={r.date} className="border-b border-slate-800">
+                  <td className="p-2">{r.date}</td>
+                  <td className="p-2">{dayNameShort(r.date)}</td>
+                  <td className="p-2 capitalize">{r.status}</td>
+                  <td className="p-2">{formatDbTimeTo12h(r.check_in_time)}</td>
+                  <td className="p-2">{formatDbTimeTo12h(r.check_out_time)}</td>
+                  <td className="p-2">{workDurationLabel(r.check_in_time, r.check_out_time)}</td>
+                  <td className="p-2 text-slate-400">{r.remarks ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Modal>
     </div>
   );

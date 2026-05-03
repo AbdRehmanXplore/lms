@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { scheduleEffectLoad } from "@/lib/utils/scheduleEffectLoad";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
 
 type ClassesJoin = { name: string } | { name: string }[] | null;
@@ -92,7 +93,9 @@ export default function DefaultersPage() {
   }, []);
 
   useEffect(() => {
-    void fetchDefaulters();
+    return scheduleEffectLoad(() => {
+      void fetchDefaulters();
+    });
   }, [fetchDefaulters]);
 
   async function toggleReminder(studentId: string, currentValue: boolean | null) {

@@ -86,7 +86,7 @@ export function AddSalaryVoucher() {
         toast.success('Salary voucher created successfully');
         router.push('/salaries');
       }
-    } catch (err) {
+    } catch {
       toast.error('An error occurred');
     } finally {
       setSubmitting(false);

@@ -38,6 +38,9 @@ import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { useFeeDefaulters } from "@/lib/hooks/useFeeDefaulters";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
 import { cn } from "@/lib/utils/cn";
+import { currentSalaryMonthYear } from "@/lib/utils/salaryPeriod";
+import { formatDbTimeTo12h } from "@/lib/utils/teacherAttendanceTime";
+import { scheduleEffectLoad } from "@/lib/utils/scheduleEffectLoad";
 
 const PIE_COLORS = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
 
@@ -45,8 +48,9 @@ type ClassFeeRow = { name: string; pct: number; paid: number; pending: number };
 
 type SalaryDueRow = {
   id: string;
-  due_date: string;
-  salary_amount: number;
+  amount: number;
+  month: string;
+  year: string;
   teachers: { full_name: string | null } | { full_name: string | null }[] | null;
 };
 
@@ -70,15 +74,29 @@ function classNameFromStudent(row: { classes?: { name: string } | { name: string
   return Array.isArray(c) ? (c[0]?.name ?? "—") : c.name;
 }
 
-function currentMonthYear() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
 function greeting(hour: number) {
   if (hour < 12) return "Good Morning";
   if (hour < 17) return "Good Afternoon";
   return "Good Evening";
+}
+
+type TaTodayRow = {
+  status: string;
+  check_in_time: string | null;
+  teachers: { full_name: string | null } | { full_name: string | null }[] | null;
+};
+
+function teacherNameFromTaRow(r: TaTodayRow) {
+  const tg = r.teachers;
+  if (!tg) return "Teacher";
+  return (Array.isArray(tg) ? tg[0] : tg)?.full_name ?? "Teacher";
+}
+
+function timeToMinutes(t: string) {
+  const s = t.slice(0, 8);
+  const [h, m] = s.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return 0;
+  return h * 60 + m;
 }
 
 const tooltipStyle = {
@@ -97,7 +115,6 @@ export function DashboardHome() {
   const monthStart = useMemo(() => new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10), [now]);
   const monthEnd = useMemo(() => new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10), [now]);
   const today = useMemo(() => now.toISOString().slice(0, 10), [now]);
-  const ym = useMemo(() => currentMonthYear(), []);
 
   const [stats, setStats] = useState({
     students: 0,
@@ -114,6 +131,12 @@ export function DashboardHome() {
     studentAtt: 0,
     teacherAtt: 0,
     pendingFeesCount: 0,
+    teacherTodayPresent: 0,
+    teacherTodayAbsent: 0,
+    teacherTodayLate: 0,
+    teacherTodayLeave: 0,
+    teacherFirstArrival: null as string | null,
+    teacherLastArrival: null as string | null,
   });
 
   const [feeExpenseMonths, setFeeExpenseMonths] = useState<{ month: string; fees: number; expenses: number }[]>([]);
@@ -164,6 +187,8 @@ export function DashboardHome() {
       const unpaidStudents = unpaidSet.size;
       const expensesMonth = (expMonth ?? []).reduce((a, r) => a + Number(r.amount), 0);
 
+      const { month: salMonth, year: salYear } = currentSalaryMonthYear();
+
       const [
         { data: attToday },
         { data: taToday },
@@ -178,11 +203,12 @@ export function DashboardHome() {
         { data: res },
       ] = await Promise.all([
         supabase.from("attendance").select("status").eq("date", today),
-        supabase.from("teacher_attendance").select("status").eq("date", today),
+        supabase.from("teacher_attendance").select("status, check_in_time, teachers(full_name)").eq("date", today),
         supabase
-          .from("teacher_salaries")
-          .select("id,due_date,salary_amount,teachers(full_name)")
-          .eq("month_year", ym)
+          .from("salary_records")
+          .select("id,amount,month,year,teachers(full_name)")
+          .eq("month", salMonth)
+          .eq("year", salYear)
           .eq("status", "unpaid"),
         supabase.from("students").select("class_id, classes(name)").eq("status", "active").limit(300),
         supabase.from("attendance").select("date,status").gte("date", new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)),
@@ -201,10 +227,10 @@ export function DashboardHome() {
           .order("payment_date", { ascending: false, nullsFirst: false })
           .limit(4),
         supabase
-          .from("teacher_salaries")
-          .select("id,month_year,salary_amount,paid_date")
+          .from("salary_records")
+          .select("id,month,year,amount,payment_date")
           .eq("status", "paid")
-          .order("paid_date", { ascending: false, nullsFirst: false })
+          .order("payment_date", { ascending: false, nullsFirst: false })
           .limit(3),
         supabase.from("results").select("id,created_at").order("created_at", { ascending: false }).limit(3),
       ]);
@@ -213,10 +239,28 @@ export function DashboardHome() {
       const present = rows.filter((r) => r.status === "present" || r.status === "late").length;
       const studentAtt = rows.length ? Math.round((present / rows.length) * 100) : 0;
 
-      const trows = taToday ?? [];
+      const trows = (taToday ?? []) as TaTodayRow[];
       const tPresent = trows.filter((r) => r.status === "present" || r.status === "late").length;
       const teacherAtt = trows.length ? Math.round((tPresent / trows.length) * 100) : 0;
       const teachersOnLeave = trows.filter((r) => r.status === "leave").length;
+      const teacherTodayPresent = trows.filter((r) => r.status === "present").length;
+      const teacherTodayAbsent = trows.filter((r) => r.status === "absent").length;
+      const teacherTodayLate = trows.filter((r) => r.status === "late").length;
+      const teacherTodayLeave = trows.filter((r) => r.status === "leave").length;
+      const arrivals = trows
+        .filter((r) => (r.status === "present" || r.status === "late") && r.check_in_time)
+        .map((r) => ({
+          name: teacherNameFromTaRow(r),
+          min: timeToMinutes(String(r.check_in_time)),
+          raw: String(r.check_in_time).slice(0, 8),
+        }))
+        .sort((a, b) => a.min - b.min);
+      const teacherFirstArrival =
+        arrivals[0] != null ? `${arrivals[0].name} at ${formatDbTimeTo12h(arrivals[0].raw)}` : null;
+      const teacherLastArrival =
+        arrivals.length > 0
+          ? `${arrivals[arrivals.length - 1].name} at ${formatDbTimeTo12h(arrivals[arrivals.length - 1].raw)}`
+          : null;
 
       let salaryDue = 0;
       let salaryDueTeachers = 0;
@@ -226,7 +270,7 @@ export function DashboardHome() {
           ...row,
           teachers: Array.isArray(row.teachers) ? row.teachers[0] ?? null : row.teachers,
         }));
-        salaryDue = salList.reduce((a, r) => a + Number(r.salary_amount), 0);
+        salaryDue = salList.reduce((a, r) => a + Number(r.amount), 0);
         salaryDueTeachers = salList.length;
       }
 
@@ -333,15 +377,14 @@ export function DashboardHome() {
           icon: "💰",
         }),
       );
-      (tsal ?? []).forEach(
-        (r: { id: string; month_year: string; salary_amount: number; paid_date: string | null }) =>
-          acts.push({
-            id: `sal-${r.id}`,
-            label: `Salary paid: ${r.month_year}`,
-            sub: r.paid_date ? new Date(r.paid_date).toLocaleString() : "",
-            at: r.paid_date ?? "",
-            icon: "💼",
-          }),
+      (tsal ?? []).forEach((r: { id: string; month: string; year: string; amount: number; payment_date: string | null }) =>
+        acts.push({
+          id: `sal-${r.id}`,
+          label: `Salary paid: ${r.month.trim()} ${r.year}`,
+          sub: r.payment_date ? new Date(`${r.payment_date}T12:00:00`).toLocaleString() : "",
+          at: r.payment_date ?? "",
+          icon: "💼",
+        }),
       );
       (res ?? []).forEach((r: { id: string; created_at: string }) =>
         acts.push({
@@ -377,6 +420,12 @@ export function DashboardHome() {
         studentAtt,
         teacherAtt,
         pendingFeesCount: pendingFeesCount ?? 0,
+        teacherTodayPresent,
+        teacherTodayAbsent,
+        teacherTodayLate,
+        teacherTodayLeave,
+        teacherFirstArrival,
+        teacherLastArrival,
       });
     } catch (e) {
       console.error("Dashboard load failed:", e);
@@ -386,7 +435,7 @@ export function DashboardHome() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, monthStart, monthEnd, today, ym, now]);
+  }, [supabase, monthStart, monthEnd, today, now]);
 
   useEffect(() => {
     let cancelled = false;
@@ -401,7 +450,9 @@ export function DashboardHome() {
   }, []);
 
   useEffect(() => {
-    void load();
+    const cancelSched = scheduleEffectLoad(() => {
+      void load();
+    });
     let ch: ReturnType<typeof supabase.channel> | null = null;
     try {
       ch = supabase
@@ -409,7 +460,7 @@ export function DashboardHome() {
         .on("postgres_changes", { event: "*", schema: "public", table: "teacher_attendance" }, () => void load())
         .on("postgres_changes", { event: "*", schema: "public", table: "fee_vouchers" }, () => void load())
         .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => void load())
-        .on("postgres_changes", { event: "*", schema: "public", table: "teacher_salaries" }, () => void load())
+        .on("postgres_changes", { event: "*", schema: "public", table: "salary_records" }, () => void load())
         .subscribe((status) => {
           if (status === "CHANNEL_ERROR") {
             console.warn("Dashboard realtime subscription unavailable");
@@ -419,6 +470,7 @@ export function DashboardHome() {
       console.warn("Realtime subscribe skipped:", e);
     }
     return () => {
+      cancelSched();
       if (ch) void supabase.removeChannel(ch);
     };
   }, [supabase, load]);
@@ -483,7 +535,7 @@ export function DashboardHome() {
       sub: "This month",
     },
     {
-      href: "/finance/salaries",
+      href: "/salaries",
       icon: Briefcase,
       color: "border-l-cyan-500 text-cyan-500",
       bg: "bg-cyan-500/15",
@@ -499,7 +551,7 @@ export function DashboardHome() {
     { href: "/fees/generate", label: "New Voucher", icon: FileText, className: "bg-emerald-600 hover:bg-emerald-700 text-white" },
     { href: "/results", label: "Enter Result", icon: ClipboardList, className: "bg-amber-600 hover:bg-amber-700 text-white" },
     { href: "/attendance", label: "Attendance", icon: CalendarCheck, className: "bg-sky-600 hover:bg-sky-700 text-white" },
-    { href: "/finance/salaries", label: "Pay Salary", icon: CreditCard, className: "bg-teal-600 hover:bg-teal-700 text-white" },
+    { href: "/salaries", label: "Pay Salary", icon: CreditCard, className: "bg-teal-600 hover:bg-teal-700 text-white" },
     { href: "/admit-cards", label: "Admit Cards", icon: Printer, className: "bg-indigo-600 hover:bg-indigo-700 text-white" },
     { href: "/history/monthly", label: "Monthly Snap", icon: Archive, className: "bg-slate-600 hover:bg-slate-700 text-white" },
   ];
@@ -518,6 +570,20 @@ export function DashboardHome() {
           </span>
           <span className="rounded-lg bg-[var(--bg-surface-2)] px-3 py-1.5 font-medium text-[var(--text-primary)]">
             Teacher attendance today: <strong>{stats.teacherAtt}%</strong>
+            <span className="mt-1 block text-xs font-normal text-[var(--text-muted)]">
+              Today: {stats.teacherTodayPresent} Present | {stats.teacherTodayAbsent} Absent | {stats.teacherTodayLate}{" "}
+              Late | {stats.teacherTodayLeave} On leave
+            </span>
+            {stats.teacherFirstArrival && (
+              <span className="mt-1 block text-xs font-normal text-[var(--text-muted)]">
+                First arrival: {stats.teacherFirstArrival}
+              </span>
+            )}
+            {stats.teacherLastArrival && (
+              <span className="mt-1 block text-xs font-normal text-[var(--text-muted)]">
+                Last arrival: {stats.teacherLastArrival}
+              </span>
+            )}
           </span>
           <span className="rounded-lg bg-[var(--bg-surface-2)] px-3 py-1.5 font-medium text-[var(--text-primary)]">
             Pending fee vouchers: <strong>{stats.pendingFeesCount}</strong>
@@ -710,7 +776,7 @@ export function DashboardHome() {
         <div className="surface-card p-4 transition-all duration-200 hover:shadow-lg">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="font-semibold text-[var(--text-primary)]">Salary due</h3>
-            <Link href="/finance/salaries" className="text-xs font-medium text-[var(--accent-blue)] hover:underline">
+            <Link href="/salaries" className="text-xs font-medium text-[var(--accent-blue)] hover:underline">
               Open
             </Link>
           </div>
@@ -719,19 +785,13 @@ export function DashboardHome() {
           ) : (
             <ul className="space-y-2">
               {salaryDueList.map((s) => {
-                const overdue = s.due_date < today;
                 const teacher = Array.isArray(s.teachers) ? s.teachers[0] : s.teachers;
                 return (
                   <li key={s.id} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-surface-2)] px-3 py-2 text-sm">
                     <span className="truncate font-medium text-[var(--text-primary)]">{teacher?.full_name ?? "Teacher"}</span>
                     <div className="flex shrink-0 items-center gap-2">
-                      {overdue ? (
-                        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
-                          OVERDUE
-                        </span>
-                      ) : null}
                       <Link
-                        href="/finance/salaries"
+                        href="/salaries"
                         className="rounded-lg bg-[var(--accent-blue)] px-2 py-1 text-[11px] font-semibold text-white hover:bg-[var(--accent-blue-hover)]"
                       >
                         Pay

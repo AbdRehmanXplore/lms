@@ -5,10 +5,12 @@ import { useEffect, useState } from "react";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { TeacherTable, type TeacherRow } from "@/components/teachers/TeacherTable";
 import { Button } from "@/components/ui/Button";
+import { currentSalaryMonthYear } from "@/lib/utils/salaryPeriod";
 
 export default function TeachersPage() {
   const supabase = useSupabaseClient();
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
+  const [salaryMonthStatus, setSalaryMonthStatus] = useState<Record<string, "paid" | "unpaid">>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -19,6 +21,13 @@ export default function TeachersPage() {
         .order("created_at", { ascending: false })
         .limit(100);
       if (!error && data) setTeachers(data as TeacherRow[]);
+      const { month, year } = currentSalaryMonthYear();
+      const { data: sal } = await supabase.from("salary_records").select("teacher_id,status").eq("month", month).eq("year", year);
+      const map: Record<string, "paid" | "unpaid"> = {};
+      for (const r of sal ?? []) {
+        if (r.status === "paid" || r.status === "unpaid") map[r.teacher_id as string] = r.status;
+      }
+      setSalaryMonthStatus(map);
       setLoading(false);
     };
     void load();
@@ -36,7 +45,7 @@ export default function TeachersPage() {
           <Button type="button">Add Teacher</Button>
         </Link>
       </div>
-      <TeacherTable teachers={teachers} />
+      <TeacherTable teachers={teachers} salaryMonthStatus={salaryMonthStatus} />
     </div>
   );
 }

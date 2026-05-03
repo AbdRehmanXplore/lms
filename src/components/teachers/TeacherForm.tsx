@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
+import { currentSalaryMonthYear } from "@/lib/utils/salaryPeriod";
 
 type ClassOption = { id: string; name: string };
 
@@ -127,9 +128,23 @@ export function TeacherForm({ classes, teacherId, defaultValues, suggestedEmploy
           const { error: updateError } = await supabase.from("teachers").update({ profile_photo: publicUrl }).eq("id", createdTeacherId);
           if (updateError) throw updateError;
         }
-        const { error: salErr } = await supabase.rpc("generate_monthly_salaries", { p_month_year: null });
-        if (salErr) console.warn("generate_monthly_salaries:", salErr.message);
-        toast.success("Teacher created");
+        const { month, year } = currentSalaryMonthYear();
+        const { error: salaryErr } = await supabase.from("salary_records").upsert(
+          {
+            teacher_id: createdTeacherId,
+            month,
+            year,
+            amount: values.salary,
+            status: "unpaid" as const,
+          },
+          { onConflict: "teacher_id,month,year" },
+        );
+        if (salaryErr) {
+          console.error(salaryErr);
+          toast.error(`Teacher saved, but payroll row failed: ${salaryErr.message}`);
+        } else {
+          toast.success("Teacher created");
+        }
       }
       router.push("/teachers");
       router.refresh();
@@ -194,6 +209,7 @@ export function TeacherForm({ classes, teacherId, defaultValues, suggestedEmploy
       <div className="space-y-3 rounded-xl border border-slate-700 p-4">
         <p className="text-sm font-medium text-slate-200">Teacher Profile Photo</p>
         <div className="flex items-center gap-4">
+          {/* eslint-disable-next-line react-hooks/incompatible-library -- RHF watch() for live initials preview */}
           <ProfilePhoto src={photoPreview} alt="Teacher" name={form.watch("fullName")} size={72} />
           <label className="cursor-pointer rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface-2)] px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-surface)]">
             Choose photo

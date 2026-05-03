@@ -9,6 +9,7 @@ import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
 import { SchoolLogo } from "@/components/shared/SchoolLogo";
 import { ORDERED_CLASSES, FIXED_SUBJECTS, EXAM_TYPES, EXAM_TYPE_DB_VALUE } from "@/lib/constants/academics";
 import { useSchoolBranding } from "@/components/providers/SchoolBrandingProvider";
+import { scheduleEffectLoad } from "@/lib/utils/scheduleEffectLoad";
 
 /** Suggestions for venue field (same for all, or type a custom name). */
 const VENUE_PRESETS = ["Hall 1", "Hall 2", "Main Hall", "Assembly Hall", "Block A", "Block B", "Science Lab", "Computer Lab"] as const;
@@ -88,11 +89,7 @@ function incompleteSubjectLabels(rows: ScheduleDraftRow[]): string[] {
   return rows.filter((r) => !isScheduleRowComplete(r)).map((r) => r.displayName);
 }
 
-function mergeDraftWithDb(
-  base: ScheduleDraftRow[],
-  dbRows: DbScheduleRow[],
-  subjectIdToDisplay: Map<string, string>,
-): ScheduleDraftRow[] {
+function mergeDraftWithDb(base: ScheduleDraftRow[], dbRows: DbScheduleRow[]): ScheduleDraftRow[] {
   const bySubject = new Map<string, DbScheduleRow>();
   dbRows.forEach((r) => bySubject.set(r.subject_id, r));
   return base.map((row) => {
@@ -258,7 +255,6 @@ export function AdmitCardsTool() {
   const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
   const [classId, setClassId] = useState("");
 
-  const [dbSubjects, setDbSubjects] = useState<{ id: string; name: string }[]>([]);
   const [scheduleRows, setScheduleRows] = useState<ScheduleDraftRow[]>(() => emptyDraftRows(FIXED_SUBJECTS.map(() => null)));
 
   const [scheduleSaved, setScheduleSaved] = useState(false);
@@ -275,22 +271,23 @@ export function AdmitCardsTool() {
   const className = useMemo(() => classes.find((c) => c.id === classId)?.name ?? "", [classes, classId]);
 
   useEffect(() => {
-    void supabase
-      .from("classes")
-      .select("id,name")
-      .order("sort_order")
-      .then(({ data }) => {
-        const list = data ?? [];
-        const order = new Map(ORDERED_CLASSES.map((n, i) => [n, i]));
-        setClasses(
-          [...list].sort((a, b) => (order.get(a.name) ?? 99) - (order.get(b.name) ?? 99)),
-        );
-      });
+    return scheduleEffectLoad(() => {
+      void supabase
+        .from("classes")
+        .select("id,name")
+        .order("sort_order")
+        .then(({ data }) => {
+          const list = data ?? [];
+          const order = new Map(ORDERED_CLASSES.map((n, i) => [n, i]));
+          setClasses(
+            [...list].sort((a, b) => (order.get(a.name) ?? 99) - (order.get(b.name) ?? 99)),
+          );
+        });
+    });
   }, [supabase]);
 
   const loadScheduleAndDraft = useCallback(async () => {
     if (!classId) {
-      setDbSubjects([]);
       setScheduleRows(emptyDraftRows(FIXED_SUBJECTS.map(() => null)));
       setScheduleSaved(false);
       setStudents([]);
@@ -301,7 +298,6 @@ export function AdmitCardsTool() {
     setLoadingSchedule(true);
     const { data: subs } = await supabase.from("subjects").select("id,name").eq("class_id", classId).order("name");
     const subjectList = subs ?? [];
-    setDbSubjects(subjectList);
 
     const ids = FIXED_SUBJECTS.map((name) => findSubjectIdForFixedName(subjectList, name));
     let draft = emptyDraftRows(ids);
@@ -313,13 +309,8 @@ export function AdmitCardsTool() {
       .eq("exam_type", examTypeDb)
       .eq("exam_year", examYear);
 
-    const idToDisplay = new Map<string, string>();
-    FIXED_SUBJECTS.forEach((fn, i) => {
-      if (ids[i]) idToDisplay.set(ids[i]!, fn);
-    });
-
     if (existing?.length) {
-      draft = mergeDraftWithDb(draft, existing as DbScheduleRow[], idToDisplay);
+      draft = mergeDraftWithDb(draft, existing as DbScheduleRow[]);
       setScheduleSaved(draft.every(isScheduleRowComplete));
     } else {
       setScheduleSaved(false);
@@ -344,7 +335,9 @@ export function AdmitCardsTool() {
   }, [classId, examTypeDb, examYear, supabase]);
 
   useEffect(() => {
-    void loadScheduleAndDraft();
+    return scheduleEffectLoad(() => {
+      void loadScheduleAndDraft();
+    });
   }, [loadScheduleAndDraft]);
 
   const updateScheduleRow = (index: number, patch: Partial<ScheduleDraftRow>) => {

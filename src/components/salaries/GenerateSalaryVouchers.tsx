@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useSupabaseClient } from '@/lib/supabase/hooks';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -56,7 +56,7 @@ export function GenerateSalaryVouchers() {
       setTeachers(teachersWithStatus);
       setPreviewed(true);
       toast.success(`Loaded ${teachersWithStatus.length} teachers`);
-    } catch (err) {
+    } catch {
       toast.error('Error loading data');
     } finally {
       setLoading(false);
@@ -78,7 +78,7 @@ export function GenerateSalaryVouchers() {
         setPreviewed(false);
         setTeachers([]);
       }
-    } catch (err) {
+    } catch {
       toast.error('Error generating vouchers');
     } finally {
       setGenerating(false);

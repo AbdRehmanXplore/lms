@@ -56,7 +56,7 @@ const groups: Group[] = [
       { href: "/fees/generate", label: "Generate Voucher", icon: Wallet },
       { href: "/fees/defaulters", label: "Fee Defaulters", icon: Wallet },
       { href: "/expenses", label: "Expenses", icon: PieChart },
-      { href: "/finance/salaries", label: "Teacher Salaries", icon: Briefcase },
+      { href: "/salaries", label: "Teacher Salaries", icon: Briefcase },
     ],
   },
   {

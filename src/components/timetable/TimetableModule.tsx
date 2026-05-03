@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReactToPrint } from "react-to-print";
-import { useRef } from "react";
 import { toast } from "sonner";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
+import { scheduleEffectLoad } from "@/lib/utils/scheduleEffectLoad";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
@@ -97,19 +97,25 @@ export function TimetableModule() {
   }, [classId, supabase]);
 
   useEffect(() => {
-    void supabase
-      .from("classes")
-      .select("id,name")
-      .order("sort_order")
-      .then(({ data }) => setClasses(data ?? []));
+    return scheduleEffectLoad(() => {
+      void supabase
+        .from("classes")
+        .select("id,name")
+        .order("sort_order")
+        .then(({ data }) => setClasses(data ?? []));
+    });
   }, [supabase]);
 
   useEffect(() => {
-    void loadOverview();
+    return scheduleEffectLoad(() => {
+      void loadOverview();
+    });
   }, [loadOverview]);
 
   useEffect(() => {
-    void loadClassGrid();
+    return scheduleEffectLoad(() => {
+      void loadClassGrid();
+    });
   }, [loadClassGrid]);
 
   const cellKey = (day: string, period: number) => `${day}-${period}`;

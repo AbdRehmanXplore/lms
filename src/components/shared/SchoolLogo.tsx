@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils/cn";
+import { scheduleEffectLoad } from "@/lib/utils/scheduleEffectLoad";
 
 type Props = {
   size?: number;
@@ -15,7 +16,9 @@ export function SchoolLogo({ size = 40, className, logoUrl }: Props) {
   const src = logoUrl?.trim() || "/logo.png";
 
   useEffect(() => {
-    setFailed(false);
+    return scheduleEffectLoad(() => {
+      setFailed(false);
+    });
   }, [src]);
 
   if (failed) {
