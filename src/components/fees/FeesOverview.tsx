@@ -19,6 +19,7 @@ function roundMoney(n: number) {
 type StudentJoin = {
   full_name: string;
   roll_number: string;
+  gr_number: string | null;
   student_uid: string | null;
   phone: string | null;
   whatsapp_reminders: boolean | null;
@@ -29,6 +30,7 @@ type StudentJoin = {
 type Voucher = {
   id: string;
   voucher_number: string;
+  fee_type: string | null;
   amount: number;
   amount_paid: number | null;
   remaining_amount: number | null;
@@ -49,6 +51,7 @@ type DefaulterAgg = {
   student_id: string;
   full_name: string;
   roll_number: string;
+  gr_number: string | null;
   student_uid: string | null;
   phone: string | null;
   profile_photo: string | null;
@@ -92,7 +95,7 @@ export function FeesOverview() {
     const { data: all } = await supabase
       .from("fee_vouchers")
       .select(
-        "id,voucher_number,amount,amount_paid,remaining_amount,is_partial,month,status,payment_date,payment_method,received_by,is_defaulter,due_date,student_id,student_phone,students(full_name,roll_number,student_uid,phone,whatsapp_reminders,profile_photo,classes(name))",
+        "id,voucher_number,fee_type,amount,amount_paid,remaining_amount,is_partial,month,status,payment_date,payment_method,received_by,is_defaulter,due_date,student_id,student_phone,students(full_name,roll_number,gr_number,student_uid,phone,whatsapp_reminders,profile_photo,classes(name))",
       )
       .order("due_date", { ascending: true })
       .limit(800);
@@ -108,6 +111,7 @@ export function FeesOverview() {
           ? {
               full_name: studentObj.full_name as string,
               roll_number: studentObj.roll_number as string,
+              gr_number: (studentObj.gr_number as string | null) ?? null,
               student_uid: (studentObj.student_uid as string | null) ?? null,
               phone: (studentObj.phone as string | null) ?? null,
               whatsapp_reminders: studentObj.whatsapp_reminders as boolean | null,
@@ -152,6 +156,7 @@ export function FeesOverview() {
           student_id: v.student_id,
           full_name: student.full_name,
           roll_number: student.roll_number,
+          gr_number: student.gr_number,
           student_uid: student.student_uid,
           phone: student.phone,
           profile_photo: student.profile_photo,
@@ -178,11 +183,12 @@ export function FeesOverview() {
       if (tab === "unpaid" && !inUnpaidTab) return false;
       const st = v.students;
       const name = st?.full_name?.toLowerCase() ?? "";
+      const gr = st?.gr_number?.toLowerCase() ?? "";
       const roll = st?.roll_number?.toLowerCase() ?? "";
       const uid = st?.student_uid?.toLowerCase() ?? "";
       const cls = st?.classes;
       const cname = (Array.isArray(cls) ? cls[0]?.name : cls?.name) ?? "";
-      const matchQ = !q || name.includes(q) || roll.includes(q) || uid.includes(q);
+      const matchQ = !q || name.includes(q) || gr.includes(q) || roll.includes(q) || uid.includes(q);
       const matchC = !classFilter || cname.toLowerCase().includes(classFilter.toLowerCase());
       return matchQ && matchC;
     });
@@ -195,6 +201,7 @@ export function FeesOverview() {
       const matchQ =
         !q ||
         d.full_name.toLowerCase().includes(q) ||
+        (d.gr_number ?? "").toLowerCase().includes(q) ||
         d.roll_number.toLowerCase().includes(q) ||
         (d.student_uid ?? "").toLowerCase().includes(q);
       const matchC = !cf || d.className.toLowerCase().includes(cf);
@@ -420,7 +427,7 @@ export function FeesOverview() {
       </div>
 
       <div className="flex flex-col gap-3 md:flex-row">
-        <Input placeholder="Search name / roll / Student ID" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Input placeholder="Search GR / name / roll / SMS ID" value={search} onChange={(e) => setSearch(e.target.value)} />
         <Input placeholder="Filter class" value={classFilter} onChange={(e) => setClassFilter(e.target.value)} />
       </div>
 
@@ -430,10 +437,11 @@ export function FeesOverview() {
             <thead className="bg-slate-800/80 text-slate-300">
               <tr>
                 <th className="p-3">Voucher</th>
-                <th className="p-3">Student ID</th>
+                <th className="p-3">GR#</th>
                 <th className="p-3">Student</th>
                 <th className="p-3">Class</th>
                 <th className="p-3">Month</th>
+                <th className="p-3">Fee Type</th>
                 <th className="p-3">Total Due</th>
                 <th className="p-3">Amount Paid</th>
                 <th className="p-3">Remaining</th>
@@ -461,12 +469,13 @@ export function FeesOverview() {
                     }
                   >
                     <td className="p-3 font-mono text-xs">{v.voucher_number}</td>
-                    <td className="p-3 font-mono text-xs font-semibold text-blue-200">{st?.student_uid ?? "—"}</td>
+                    <td className="p-3 font-mono text-xs font-semibold text-amber-200">{st?.gr_number ?? "—"}</td>
                     <td className="p-3">
                       {st?.full_name} ({st?.roll_number})
                     </td>
                     <td className="p-3">{cname ?? "—"}</td>
                     <td className="p-3">{v.month}</td>
+                    <td className="p-3">{v.fee_type ?? "Tuition"}</td>
                     <td className="p-3">{formatCurrency(td)}</td>
                     <td className="p-3">{formatCurrency(ap)}</td>
                     <td className="p-3">{formatCurrency(rem)}</td>
@@ -528,7 +537,7 @@ export function FeesOverview() {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="p-6 text-center text-slate-500">
+                  <td colSpan={12} className="p-6 text-center text-slate-500">
                     No vouchers found for this tab/filter.
                   </td>
                 </tr>
@@ -542,7 +551,7 @@ export function FeesOverview() {
             <thead className="bg-red-950/40 text-slate-300">
               <tr>
                 <th className="p-3">Photo</th>
-                <th className="p-3">Student ID</th>
+                <th className="p-3">GR#</th>
                 <th className="p-3">Name</th>
                 <th className="p-3">Class</th>
                 <th className="p-3">Phone</th>
@@ -558,7 +567,7 @@ export function FeesOverview() {
                   <td className="p-3">
                     <ProfilePhoto src={d.profile_photo} alt={d.full_name} name={d.full_name} size={36} />
                   </td>
-                  <td className="p-3 font-mono text-xs font-semibold text-blue-200">{d.student_uid ?? "—"}</td>
+                  <td className="p-3 font-mono text-xs font-semibold text-amber-200">{d.gr_number ?? "—"}</td>
                   <td className="p-3 font-medium">{d.full_name}</td>
                   <td className="p-3">{d.className}</td>
                   <td className="p-3 font-mono text-xs">{d.phone ?? "—"}</td>

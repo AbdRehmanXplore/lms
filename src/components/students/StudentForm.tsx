@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
+import { formatGrNumber, getGrPrefixFromClassName } from "@/lib/utils/studentIdentifiers";
 
 type ClassOption = { id: string; name: string };
 
@@ -20,14 +21,16 @@ type Props = {
   suggestedRoll?: string;
   /** Permanent ID — display only, never editable */
   studentUid?: string | null;
+  grNumber?: string | null;
 };
 
-export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, studentUid }: Props) {
+export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, studentUid, grNumber }: Props) {
   const supabase = useSupabaseClient();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState(defaultValues?.profilePhoto ?? "");
+  const [grPreview, setGrPreview] = useState(grNumber ?? "Auto-generated on save");
   const MAX_SIZE = 500 * 1024;
   const PHOTO_BUCKET = "school_Children_photos";
 
@@ -45,11 +48,14 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
       phone: "",
       email: "",
       admissionDate: new Date().toISOString().slice(0, 10),
+      shift: "Morning",
+      section: "A",
       profilePhoto: "",
       status: "active",
       ...defaultValues,
     },
   });
+  const selectedClassId = form.watch("classId");
 
   useEffect(() => {
     if (suggestedRoll && !studentId) {
@@ -61,6 +67,33 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
     setPhotoPreview(defaultValues?.profilePhoto ?? "");
     setSelectedPhotoFile(null);
   }, [defaultValues?.profilePhoto]);
+
+  useEffect(() => {
+    if (grNumber) {
+      setGrPreview(grNumber);
+      return;
+    }
+
+    const selectedClass = classes.find((item) => item.id === selectedClassId);
+    if (!selectedClass) {
+      setGrPreview("Auto-generated on save");
+      return;
+    }
+
+    const prefix = getGrPrefixFromClassName(selectedClass.name);
+    void supabase
+      .from("students")
+      .select("gr_number")
+      .like("gr_number", `${prefix}-%`)
+      .then(({ data }) => {
+        const maxSeq = (data ?? []).reduce((max, row) => {
+          const raw = typeof row.gr_number === "string" ? row.gr_number : "";
+          const value = Number(raw.split("-")[1] ?? 0);
+          return Number.isFinite(value) ? Math.max(max, value) : max;
+        }, 0);
+        setGrPreview(`${formatGrNumber(prefix, maxSeq + 1)} (Auto-generated)`);
+      });
+  }, [classes, grNumber, selectedClassId, supabase]);
 
   const extractStoragePath = (publicUrl: string) => {
     const marker = `/object/public/${PHOTO_BUCKET}/`;
@@ -83,27 +116,6 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
     return publicUrl;
   };
 
-  const getNextStudentUid = async () => {
-    const { data, error } = await supabase
-      .from("students")
-      .select("student_uid")
-      .ilike("student_uid", "nogs-%");
-    if (error) {
-      throw error;
-    }
-
-    const maxSeq = (data ?? []).reduce((max, row) => {
-      const uid = row.student_uid?.toLowerCase() ?? "";
-      const match = /^nogs-(\d+)$/.exec(uid);
-      if (!match) return max;
-      const n = Number(match[1]);
-      return Number.isFinite(n) ? Math.max(max, n) : max;
-    }, 0);
-
-    const next = maxSeq + 1;
-    return `nogs-${String(next).padStart(2, "0")}`;
-  };
-
   const onSubmit = async (values: StudentFormValues) => {
     setLoading(true);
     try {
@@ -124,6 +136,8 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
         phone: values.phone,
         email: values.email || null,
         admission_date: values.admissionDate,
+        shift: values.shift,
+        section: values.section,
         status: values.status,
       };
 
@@ -144,10 +158,9 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
         if (error) throw error;
         toast.success("Student updated");
       } else {
-        const nextStudentUid = await getNextStudentUid();
         const { data: inserted, error } = await supabase
           .from("students")
-          .insert({ ...payload, student_uid: nextStudentUid })
+          .insert(payload)
           .select("id")
           .single();
         if (error) throw error;
@@ -181,7 +194,15 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
       <h1 className="text-2xl font-semibold">{studentId ? "Edit Student" : "Add Student"}</h1>
       {studentUid && (
         <p className="rounded-lg border border-slate-600 bg-slate-900/80 px-3 py-2 font-mono text-sm text-blue-200">
-          Student ID (permanent): {studentUid}
+          SMS ID (permanent): {studentUid}
+        </p>
+      )}
+      <p className="rounded-lg border border-amber-500/30 bg-amber-950/30 px-3 py-2 font-mono text-sm text-amber-100">
+        GR#: {grPreview}
+      </p>
+      {grNumber && (
+        <p className="text-xs text-slate-400">
+          GR number is permanent and cannot be edited.
         </p>
       )}
 
@@ -247,6 +268,14 @@ export function StudentForm({ classes, studentId, defaultValues, suggestedRoll, 
             <p className="text-xs text-red-400">{form.formState.errors.admissionDate.message}</p>
           )}
         </div>
+        <div className="space-y-1">
+          <label className="text-sm text-slate-300">Shift</label>
+          <select className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2" {...form.register("shift")}>
+            <option value="Morning">Morning</option>
+            <option value="Evening">Evening</option>
+          </select>
+        </div>
+        <Input label="Section" {...form.register("section")} error={form.formState.errors.section?.message} />
         <div className="space-y-1">
           <label className="text-sm text-slate-300">Status</label>
           <select className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2" {...form.register("status")}>

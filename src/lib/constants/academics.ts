@@ -23,6 +23,7 @@ export const FIXED_SUBJECTS = [
   "Social Studies",
   "Islamiat",
   "Sindhi",
+  "Computer",
 ] as const;
 
 export const EXAM_TYPES = ["Monthly Test", "Mid-Term", "Final Exam", "Unit Test"] as const;

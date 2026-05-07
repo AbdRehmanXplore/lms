@@ -15,7 +15,7 @@ export default function StudentsPage() {
     const load = async () => {
       const { data, error } = await supabase
         .from("students")
-        .select("id,student_uid,roll_number,full_name,father_name,gender,status,profile_photo,classes(name)")
+        .select("id,gr_number,student_uid,roll_number,full_name,father_name,gender,status,profile_photo,classes(name)")
         .order("roll_number")
         .limit(100);
       if (!error && data) {
@@ -24,6 +24,7 @@ export default function StudentsPage() {
           const nameObj = Array.isArray(cls) ? cls[0] : cls;
           return {
             id: row.id as string,
+            gr_number: (row.gr_number as string | null) ?? null,
             student_uid: (row.student_uid as string | null) ?? null,
             roll_number: row.roll_number as string,
             full_name: row.full_name as string,

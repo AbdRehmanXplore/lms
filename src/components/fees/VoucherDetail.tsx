@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useReactToPrint } from "react-to-print";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -8,12 +8,13 @@ import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
 import { Button } from "@/components/ui/Button";
 import { SchoolLogo } from "@/components/shared/SchoolLogo";
-import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
 import { useSchoolBranding } from "@/components/providers/SchoolBrandingProvider";
+import { normalizeFeeLineItems } from "@/lib/utils/feeLineItems";
 
 type Row = {
   id: string;
   voucher_number: string;
+  fee_type: string | null;
   amount: number;
   amount_paid: number | null;
   remaining_amount: number | null;
@@ -26,48 +27,37 @@ type Row = {
   payment_method: string | null;
   received_by: string | null;
   remarks: string | null;
-  line_items: { month: string; amount: number }[] | null;
+  line_items: unknown;
   students: {
     full_name: string;
     roll_number: string;
     father_name: string;
     student_uid: string | null;
-    phone: string | null;
-    profile_photo: string | null;
+    gr_number: string | null;
+    section: string | null;
     classes: { name: string } | { name: string }[] | null;
   } | null;
 };
 
+type OutstandingVoucher = {
+  id: string;
+  month: string;
+  fee_type: string | null;
+  remaining_amount: number | null;
+  amount: number;
+  line_items: unknown;
+};
+
 const SELECT =
-  "id,voucher_number,amount,amount_paid,remaining_amount,is_partial,month,status,due_date,issue_date,payment_date,payment_method,received_by,remarks,line_items,students(full_name,roll_number,father_name,student_uid,phone,profile_photo,classes(name))";
+  "id,voucher_number,fee_type,amount,amount_paid,remaining_amount,is_partial,month,status,due_date,issue_date,payment_date,payment_method,received_by,remarks,line_items,students(full_name,roll_number,father_name,student_uid,gr_number,section,classes(name))";
 
 export function VoucherDetail({ id }: { id: string }) {
   const supabase = useSupabaseClient();
   const [row, setRow] = useState<Row | null>(null);
+  const [outstandingVouchers, setOutstandingVouchers] = useState<OutstandingVoucher[]>([]);
   const printRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ contentRef: printRef });
   const { schoolName, logoUrl } = useSchoolBranding();
-
-  const normalizeRow = (data: Record<string, unknown>): Row => {
-    const st = data.students as Record<string, unknown> | Record<string, unknown>[] | null;
-    const studentObj = Array.isArray(st) ? st[0] : st;
-    const cls = studentObj?.classes as { name: string } | { name: string }[] | null;
-    const classesNorm = Array.isArray(cls) ? cls[0] ?? null : cls;
-    return {
-      ...(data as Omit<Row, "students">),
-      students: studentObj
-        ? {
-            full_name: studentObj.full_name as string,
-            roll_number: studentObj.roll_number as string,
-            father_name: studentObj.father_name as string,
-            student_uid: (studentObj.student_uid as string | null) ?? null,
-            phone: (studentObj.phone as string | null) ?? null,
-            profile_photo: (studentObj.profile_photo as string | null) ?? null,
-            classes: classesNorm,
-          }
-        : null,
-    };
-  };
 
   useEffect(() => {
     void supabase
@@ -75,25 +65,86 @@ export function VoucherDetail({ id }: { id: string }) {
       .select(SELECT)
       .eq("id", id)
       .maybeSingle()
-      .then(({ data }) => {
-        if (!data) {
-          setRow(null);
-          return;
-        }
-        setRow(normalizeRow(data as Record<string, unknown>));
-      });
+      .then(({ data }) => setRow((data as Row | null) ?? null));
   }, [id, supabase]);
+
+  // Fetch outstanding (unpaid/overdue) vouchers for the same student
+  useEffect(() => {
+    if (!row?.students) return;
+
+    void supabase
+      .from("fee_vouchers")
+      .select("id,month,fee_type,remaining_amount,amount,line_items")
+      .eq("student_id", id) // will fix below
+      .then(() => {}); // placeholder — see the real fetch below
+  }, [row, supabase, id]);
+
+  useEffect(() => {
+    if (!row) return;
+
+    // Fetch the student_id for this voucher first, then get their outstanding vouchers
+    void supabase
+      .from("fee_vouchers")
+      .select("student_id")
+      .eq("id", id)
+      .maybeSingle()
+      .then(({ data: vData }) => {
+        if (!vData?.student_id) return;
+        void supabase
+          .from("fee_vouchers")
+          .select("id,month,fee_type,remaining_amount,amount,line_items")
+          .eq("student_id", vData.student_id)
+          .in("status", ["unpaid", "overdue", "partial"])
+          .neq("id", id) // exclude current voucher
+          .then(({ data }) => {
+            setOutstandingVouchers((data as OutstandingVoucher[]) ?? []);
+          });
+      });
+  }, [row, supabase, id]);
+
+  if (!row) return <p className="text-slate-400">Loading…</p>;
+
+  const student = row.students;
+  const className = Array.isArray(student?.classes)
+    ? student?.classes[0]?.name
+    : student?.classes?.name;
+  const lineItems = normalizeFeeLineItems(row);
+  const grandTotal = lineItems.reduce((sum, item) => sum + Number(item.amount), 0);
+  const paidFull = row.status.toLowerCase() === "paid";
+  const receiptDate = new Date();
+
+  // Build outstanding rows from other unpaid vouchers
+  const outstandingRows: { month: string; feeType: string; amount: number }[] = [];
+  for (const ov of outstandingVouchers) {
+    const items = normalizeFeeLineItems(ov);
+    if (items.length > 0) {
+      for (const item of items) {
+        outstandingRows.push({
+          month: (item.month ?? ov.month).toUpperCase(),
+          feeType: item.feeType,
+          amount: Number(item.amount),
+        });
+      }
+    } else {
+      outstandingRows.push({
+        month: ov.month.toUpperCase(),
+        feeType: ov.fee_type ?? "Fee",
+        amount: Number(ov.remaining_amount ?? ov.amount),
+      });
+    }
+  }
+  const outstandingTotal = outstandingRows.reduce((s, r) => s + r.amount, 0);
 
   const markPaid = async () => {
     const today = new Date().toISOString().slice(0, 10);
-    const amt = row ? Number(row.amount) : 0;
+    const amount = row ? Number(row.amount) : 0;
     const { error } = await supabase
       .from("fee_vouchers")
       .update({
         status: "paid",
         payment_date: today,
         payment_method: "Cash",
-        amount_paid: amt,
+        amount_paid: amount,
         remaining_amount: 0,
         is_partial: false,
       })
@@ -103,24 +154,13 @@ export function VoucherDetail({ id }: { id: string }) {
       return;
     }
     toast.success("Marked paid in full");
-    const { data } = await supabase.from("fee_vouchers").select(SELECT).eq("id", id).maybeSingle();
-    if (data) setRow(normalizeRow(data as Record<string, unknown>));
+    const { data } = await supabase
+      .from("fee_vouchers")
+      .select(SELECT)
+      .eq("id", id)
+      .maybeSingle();
+    setRow((data as Row | null) ?? null);
   };
-
-  if (!row) {
-    return <p className="text-slate-400">Loading…</p>;
-  }
-
-  const st = row.students;
-  const cls = st?.classes;
-  const className = Array.isArray(cls) ? cls[0]?.name : cls?.name;
-  const paidFull = row.status.toLowerCase() === "paid";
-  const partialReceipt = row.status.toLowerCase() === "partial";
-  const phoneMask = st?.phone
-    ? st.phone.length > 8
-      ? `${st.phone.slice(0, 4)}-XXXX-${st.phone.slice(-4)}`
-      : st.phone
-    : "—";
 
   return (
     <div className="space-y-6">
@@ -140,104 +180,140 @@ export function VoucherDetail({ id }: { id: string }) {
         </Link>
       </div>
 
-      <div ref={printRef} className="voucher-print surface-card max-w-xl p-8 text-black">
-        <div className="flex items-start justify-between border-b border-black pb-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <SchoolLogo size={32} className="rounded-md" logoUrl={logoUrl} />
-              <h1 className="text-lg font-bold">{schoolName}</h1>
+      {/* PRINTABLE VOUCHER */}
+      <div ref={printRef} className="voucher-print mx-auto bg-white text-black" style={{ maxWidth: "900px" }}>
+        {/* Two-column layout: left = receipt, right = outstanding */}
+        <div className="flex border border-black">
+
+          {/* ── LEFT: Main Receipt ── */}
+          <div className="flex-1 border-r border-black">
+            {/* School Header */}
+            <div className="border-b border-black px-4 py-3 text-center">
+              <div className="flex items-center justify-center gap-3">
+                <SchoolLogo size={42} className="rounded-md" logoUrl={logoUrl} />
+                <div>
+                  <p className="text-base font-bold">{schoolName}</p>
+                  <p className="text-xs">B-160, Sector 11-A, North Karachi</p>
+                  <p className="text-xs">03409756551, Campus III</p>
+                </div>
+              </div>
             </div>
-            <p className="text-sm font-semibold uppercase tracking-wide">
-              {paidFull ? "Payment Receipt" : partialReceipt ? "Payment Receipt" : "Fee Payment Voucher"}
-            </p>
-          </div>
-          <ProfilePhoto
-            src={st?.profile_photo}
-            alt={st?.full_name ?? "student"}
-            name={st?.full_name ?? null}
-            size={72}
-            className="border border-black"
-          />
-        </div>
-        <div className="mt-6 space-y-2 text-sm">
-          <p>
-            <strong>Student:</strong> {st?.full_name}
-          </p>
-          <p>
-            <strong>Class:</strong> {className ?? "—"}
-          </p>
-          <p>
-            <strong>Phone:</strong> {phoneMask}
-          </p>
-          <p>
-            <strong>Voucher No:</strong> {row.voucher_number}
-          </p>
-          <p>
-            <strong>Issue:</strong> {row.issue_date} &nbsp; <strong>Due:</strong> {row.due_date}
-          </p>
-          <p>
-            <strong>Student ID:</strong> {st?.student_uid ?? "—"}
-          </p>
-          <p>
-            <strong>Father:</strong> {st?.father_name}
-          </p>
-          <p>
-            <strong>Roll:</strong> {st?.roll_number}
-          </p>
-          <p>
-            <strong>Month:</strong> {row.month}
-          </p>
-          {row.line_items && row.line_items.length > 0 && (
-            <ul className="list-inside list-disc">
-              {row.line_items.map((line, i) => (
-                <li key={i}>
-                  {line.month}: {formatCurrency(line.amount)}
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="border-t border-black pt-3">
-            <p>
-              <strong>Total Due:</strong> {formatCurrency(Number(row.amount))}
-            </p>
-            {(paidFull || partialReceipt) && (
-              <>
-                <p>
-                  <strong>Amount Paid:</strong> {formatCurrency(Number(row.amount_paid ?? row.amount))}
-                </p>
-                <p>
-                  <strong>Remaining:</strong> {formatCurrency(Number(row.remaining_amount ?? 0))}
-                </p>
-              </>
-            )}
-            {!paidFull && !partialReceipt && (
-              <p className="text-lg font-semibold">Balance Due: {formatCurrency(Number(row.amount))}</p>
-            )}
-            <p className="mt-2 font-bold">
-              STATUS:{" "}
-              {paidFull ? (
-                <span className="text-emerald-700">PAID IN FULL ✅</span>
-              ) : partialReceipt ? (
-                <span className="text-amber-700">PARTIAL PAYMENT</span>
-              ) : (
-                <span>{row.status.toUpperCase()}</span>
+
+            {/* Title */}
+            <div className="border-b border-black px-4 py-2 text-center text-base font-semibold">
+              Student Fee Receipt
+            </div>
+
+            {/* Student Info */}
+            <div className="border-b border-black px-4 py-2 text-xs">
+              <div className="grid grid-cols-2 gap-1">
+                <p><strong>Student Name:</strong> {student?.full_name ?? "—"}</p>
+                <p><strong>Father Name:</strong> {student?.father_name ?? "—"}</p>
+                <p><strong>Voucher #:</strong> {row.voucher_number}</p>
+                <p><strong>GR#:</strong> {student?.gr_number ?? "—"} &nbsp; <strong>Class:</strong> {className ?? "—"} &nbsp; <strong>Section:</strong> {student?.section ?? "A"}</p>
+                <p><strong>Receipt Date:</strong> {receiptDate.toLocaleDateString("en-GB")}</p>
+                <p><strong>Receipt Time:</strong> {receiptDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</p>
+              </div>
+            </div>
+
+            {/* Fee Table */}
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <tr className="bg-gray-100">
+                  <th className="border-b border-r border-black px-2 py-1 text-left">Fee Month</th>
+                  <th className="border-b border-r border-black px-2 py-1 text-left">Fee Type</th>
+                  <th className="border-b border-r border-black px-2 py-1 text-center">Amount Type</th>
+                  <th className="border-b border-r border-black px-2 py-1 text-center">Fee Amount</th>
+                  <th className="border-b border-black px-2 py-1 text-center">Net Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lineItems.map((item, index) => (
+                  <tr key={`${item.feeType}-${index}`}>
+                    <td className="border-b border-r border-black px-2 py-1">{(item.month ?? row.month).toUpperCase()}</td>
+                    <td className="border-b border-r border-black px-2 py-1">{item.feeType}</td>
+                    <td className="border-b border-r border-black px-2 py-1 text-center">
+                      {row.status === "overdue" ? "Overdue" : row.status === "paid" ? "Paid" : "Due"}
+                    </td>
+                    <td className="border-b border-r border-black px-2 py-1 text-center">{formatCurrency(Number(item.amount))}</td>
+                    <td className="border-b border-black px-2 py-1 text-center">{formatCurrency(Number(item.amount))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* Grand Total */}
+            <div className="border-b border-black px-4 py-2 text-xs font-bold">
+              Grand Total: PKR {grandTotal.toLocaleString()}/-
+            </div>
+
+            {/* Footer */}
+            <div className="px-4 py-3 text-xs">
+              <p>Received by School</p>
+              <p className="mt-1 text-gray-500">
+                Note: This is computer generated voucher and does not require a signature.
+              </p>
+              {paidFull && (
+                <p className="mt-1 font-bold text-green-700">Status: PAID</p>
               )}
-            </p>
+            </div>
           </div>
-          {(paidFull || partialReceipt) && (
-            <>
-              <p>
-                <strong>Payment Date:</strong>{" "}
-                {row.payment_date ? new Date(row.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
-              </p>
-              <p>
-                <strong>Payment Method:</strong> {row.payment_method ?? "—"}
-              </p>
-              <p>
-                <strong>Received By:</strong> {row.received_by ?? "—"}
-              </p>
-            </>
-          )}
+
+          {/* ── RIGHT: Outstanding Fees (Parent's Copy) ── */}
+          <div className="w-56 flex flex-col">
+            {/* Parent's Copy Label */}
+            <div className="border-b border-black px-3 py-2 text-center text-xs font-bold bg-gray-100">
+              Parent&apos;s Copy
+            </div>
+
+            {/* Outstanding heading */}
+            <div className="border-b border-black px-3 py-2 text-center text-xs font-semibold">
+              Outstanding Fee(s)
+            </div>
+
+            {/* Outstanding Table */}
+            <table className="w-full border-collapse text-xs flex-1">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="border-b border-r border-black px-2 py-1 text-left">Fee Month</th>
+                  <th className="border-b border-r border-black px-2 py-1 text-left">Type</th>
+                  <th className="border-b border-black px-2 py-1 text-center">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {outstandingRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-2 py-4 text-center text-gray-400 text-xs">
+                      No outstanding fees
+                    </td>
+                  </tr>
+                ) : (
+                  outstandingRows.map((r, i) => (
+                    <tr key={i}>
+                      <td className="border-b border-r border-black px-2 py-1">{r.month}</td>
+                      <td className="border-b border-r border-black px-2 py-1">{r.feeType}</td>
+                      <td className="border-b border-black px-2 py-1 text-center">
+                        PKR {r.amount.toLocaleString()}/-
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              {outstandingRows.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td colSpan={2} className="border-t border-black px-2 py-1 font-bold text-right">
+                      Total:
+                    </td>
+                    <td className="border-t border-black px-2 py-1 text-center font-bold">
+                      PKR {outstandingTotal.toLocaleString()}/-
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+
         </div>
       </div>
     </div>

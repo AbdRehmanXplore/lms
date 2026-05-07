@@ -801,6 +801,15 @@ Make sure ALL of these are true before considering the project done:
 - [x] All 7 subjects on result entry / print
 
 ### Session Progress Update (Completed)
+- [x] Auto GR number system (KG/PP/SS series)
+- [x] Student detail page with fee history right panel
+- [x] Fee status highlight and print section
+- [x] Multiple fee types per voucher
+- [x] Result card redesigned to match school format
+- [x] Rank calculation added to results
+- [x] GR number on all printed documents
+- [x] Dashboard table format
+- [x] Voucher date locked to today
 - [x] Student photo upload implemented on add/edit with preview, 500KB limit, storage upload, old-photo delete on replace, and DB URL update
 - [x] Student photo display implemented in students list, student detail header, class detail rows, fee voucher views, admit cards, and result print card
 - [x] Fallback avatar unified to initials-in-circle (prevents broken image icons)

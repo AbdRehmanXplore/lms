@@ -15,6 +15,8 @@ export const studentSchema = z.object({
     .optional()
     .refine((val) => !val || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val), "Invalid email"),
   admissionDate: z.string().min(1, "Admission date is required"),
+  shift: z.enum(["Morning", "Evening"]),
+  section: z.string().min(1, "Section is required"),
   profilePhoto: z.string().url().optional().or(z.literal("")),
   status: z.enum(["active", "inactive", "graduated"]),
 });

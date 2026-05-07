@@ -55,6 +55,9 @@ export function ExpensesModule() {
   const [filterCat, setFilterCat] = useState<string>("");
   const [filterMonth, setFilterMonth] = useState(String(new Date().getMonth() + 1).padStart(2, "0"));
   const [filterYear, setFilterYear] = useState(String(new Date().getFullYear()));
+  const [filterDate, setFilterDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dateMode, setDateMode] = useState<"month" | "day">("month");
+  const [highlightedExpenseIds, setHighlightedExpenseIds] = useState<string[]>([]);
 
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<string>("Other");
@@ -143,12 +146,25 @@ export function ExpensesModule() {
   const filtered = useMemo(() => {
     return expenses.filter((e) => {
       if (filterCat && e.category !== filterCat) return false;
-      const d = e.expense_date.slice(0, 7);
-      const want = `${filterYear}-${filterMonth.padStart(2, "0")}`;
-      if (d !== want) return false;
+      if (dateMode === "day") {
+        if (e.expense_date !== filterDate) return false;
+      } else {
+        const d = e.expense_date.slice(0, 7);
+        const want = `${filterYear}-${filterMonth.padStart(2, "0")}`;
+        if (d !== want) return false;
+      }
       return true;
     });
-  }, [expenses, filterCat, filterMonth, filterYear]);
+  }, [expenses, filterCat, filterDate, filterMonth, filterYear, dateMode]);
+
+  const highlightedRows = useMemo(
+    () => filtered.filter((e) => highlightedExpenseIds.includes(e.id)),
+    [filtered, highlightedExpenseIds],
+  );
+  const highlightedTotal = useMemo(
+    () => highlightedRows.reduce((sum, row) => sum + Number(row.amount), 0),
+    [highlightedRows],
+  );
 
   const pieData = useMemo(() => {
     const map = new Map<string, number>();
@@ -256,10 +272,20 @@ export function ExpensesModule() {
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `expenses-${filterYear}-${filterMonth}.csv`;
+    a.download = dateMode === "day" ? `expenses-${filterDate}.csv` : `expenses-${filterYear}-${filterMonth}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
+
+  const toggleHighlight = (id: string) => {
+    setHighlightedExpenseIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  };
+
+  useEffect(() => {
+    if (dateMode === "day") {
+      setHighlightedExpenseIds(filtered.map((row) => row.id));
+    }
+  }, [dateMode, filtered]);
 
   if (loading && expenses.length === 0) {
     return <p className="text-slate-400">Loading…</p>;
@@ -378,6 +404,47 @@ export function ExpensesModule() {
 
       <div className="flex flex-wrap items-end gap-4">
         <div>
+          <label className="text-xs text-slate-400">View</label>
+          <select
+            className="mt-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
+            value={dateMode}
+            onChange={(e) => {
+              setDateMode(e.target.value as "month" | "day");
+              setHighlightedExpenseIds([]);
+            }}
+          >
+            <option value="month">Month</option>
+            <option value="day">Specific day</option>
+          </select>
+        </div>
+        {dateMode === "day" && (
+          <>
+            <div>
+              <label className="text-xs text-slate-400">Date</label>
+              <input
+                type="date"
+                className="mt-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
+                value={filterDate}
+                onChange={(e) => {
+                  setFilterDate(e.target.value);
+                  setHighlightedExpenseIds([]);
+                }}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setFilterDate(new Date().toISOString().slice(0, 10));
+                setHighlightedExpenseIds([]);
+              }}
+            >
+              Today
+            </Button>
+          </>
+        )}
+        {dateMode === "month" && (
+        <div>
           <label className="text-xs text-slate-400">Month</label>
           <select
             className="mt-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
@@ -391,6 +458,8 @@ export function ExpensesModule() {
             ))}
           </select>
         </div>
+        )}
+        {dateMode === "month" && (
         <div>
           <label className="text-xs text-slate-400">Year</label>
           <input
@@ -399,6 +468,7 @@ export function ExpensesModule() {
             onChange={(e) => setFilterYear(e.target.value)}
           />
         </div>
+        )}
         <div>
           <label className="text-xs text-slate-400">Category</label>
           <select
@@ -417,6 +487,15 @@ export function ExpensesModule() {
         <Button type="button" variant="secondary" onClick={() => void exportCsv()}>
           Export CSV
         </Button>
+      </div>
+
+      <div className="surface-card p-4">
+        <p className="text-sm text-slate-300">
+          {dateMode === "day" ? `Showing expenses for ${filterDate}` : `Showing expenses for ${filterYear}-${filterMonth}`}
+        </p>
+        <p className="mt-1 text-sm text-amber-300">
+          Highlighted rows: {highlightedRows.length} · Highlighted total: {formatCurrency(highlightedTotal)}
+        </p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -477,14 +556,25 @@ export function ExpensesModule() {
               </tr>
             ) : (
               filtered.map((e) => (
-                <tr key={e.id} className="border-t border-slate-700">
+                <tr
+                  key={e.id}
+                  className={`border-t border-slate-700 cursor-pointer ${highlightedExpenseIds.includes(e.id) ? "bg-yellow-500/30" : ""}`}
+                  onClick={() => toggleHighlight(e.id)}
+                >
                   <td className="p-3">{e.expense_date}</td>
                   <td className="p-3">{e.title}</td>
                   <td className="p-3">{e.category}</td>
                   <td className="p-3">{formatCurrency(Number(e.amount))}</td>
                   <td className="p-3">{e.paid_to ?? "—"}</td>
                   <td className="p-3">
-                    <Button type="button" variant="danger" onClick={() => setDeleteId(e.id)}>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setDeleteId(e.id);
+                      }}
+                    >
                       Delete
                     </Button>
                   </td>

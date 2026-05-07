@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { useSupabaseClient } from "@/lib/supabase/hooks";
 import { Button } from "@/components/ui/Button";
 
-type Student = { id: string; roll_number: string; full_name: string; student_uid: string | null };
+type Student = { id: string; gr_number: string | null; roll_number: string; full_name: string; student_uid: string | null };
 type Status = "present" | "absent" | "late";
 
 export function AttendanceMarking() {
@@ -37,7 +37,7 @@ export function AttendanceMarking() {
       const [{ data: studs }, { data: att }] = await Promise.all([
         supabase
           .from("students")
-          .select("id,roll_number,full_name,student_uid")
+          .select("id,gr_number,roll_number,full_name,student_uid")
           .eq("class_id", classId)
           .eq("status", "active")
           .order("roll_number")
@@ -139,7 +139,8 @@ export function AttendanceMarking() {
         <table className="w-full min-w-[640px] text-sm">
           <thead className="bg-slate-800/80">
             <tr>
-              <th className="p-3 text-left">Student ID</th>
+              <th className="p-3 text-left">GR#</th>
+              <th className="p-3 text-left">SMS ID</th>
               <th className="p-3 text-left">Roll</th>
               <th className="p-3 text-left">Name</th>
               <th className="p-3">Present</th>
@@ -152,6 +153,7 @@ export function AttendanceMarking() {
               const st = statusMap[s.id] ?? "present";
               return (
                 <tr key={s.id} className="border-t border-slate-700">
+                  <td className="p-3 font-mono text-xs font-semibold text-amber-300">{s.gr_number ?? "—"}</td>
                   <td className="p-3 font-mono text-xs font-semibold text-blue-300">{s.student_uid ?? "—"}</td>
                   <td className="p-3">{s.roll_number}</td>
                   <td className="p-3">{s.full_name}</td>

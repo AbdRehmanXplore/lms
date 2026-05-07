@@ -27,16 +27,17 @@ export function SearchBar() {
         return;
       }
       const p = `%${t}%`;
-      const [sName, sRoll, sFather, sUid, tName, tCode] = await Promise.all([
-        supabase.from("students").select("id,full_name,roll_number,father_name,student_uid,classes(name)").ilike("full_name", p).limit(5),
-        supabase.from("students").select("id,full_name,roll_number,father_name,student_uid,classes(name)").ilike("roll_number", p).limit(5),
-        supabase.from("students").select("id,full_name,roll_number,father_name,student_uid,classes(name)").ilike("father_name", p).limit(5),
-        supabase.from("students").select("id,full_name,roll_number,father_name,student_uid,classes(name)").ilike("student_uid", p).limit(5),
+      const [sName, sRoll, sFather, sUid, sGr, tName, tCode] = await Promise.all([
+        supabase.from("students").select("id,full_name,roll_number,father_name,student_uid,gr_number,status,classes(name)").ilike("full_name", p).limit(5),
+        supabase.from("students").select("id,full_name,roll_number,father_name,student_uid,gr_number,status,classes(name)").ilike("roll_number", p).limit(5),
+        supabase.from("students").select("id,full_name,roll_number,father_name,student_uid,gr_number,status,classes(name)").ilike("father_name", p).limit(5),
+        supabase.from("students").select("id,full_name,roll_number,father_name,student_uid,gr_number,status,classes(name)").ilike("student_uid", p).limit(5),
+        supabase.from("students").select("id,full_name,roll_number,father_name,student_uid,gr_number,status,classes(name)").ilike("gr_number", p).limit(5),
         supabase.from("teachers").select("id,full_name,employee_code,subject").ilike("full_name", p).limit(5),
         supabase.from("teachers").select("id,full_name,employee_code,subject").ilike("employee_code", p).limit(5),
       ]);
       const sMap = new Map<string, Record<string, unknown>>();
-      [sName.data, sRoll.data, sFather.data, sUid.data].forEach((rows) => {
+      [sName.data, sRoll.data, sFather.data, sUid.data, sGr.data].forEach((rows) => {
         (rows ?? []).forEach((row: Record<string, unknown>) => sMap.set(row.id as string, row));
       });
       const sRes = { data: [...sMap.values()].slice(0, 8) };
@@ -51,11 +52,13 @@ export function SearchBar() {
           const cls = row.classes as { name: string } | { name: string }[] | null;
           const cn = Array.isArray(cls) ? cls[0]?.name : cls?.name;
           const uid = row.student_uid as string | null;
+          const gr = row.gr_number as string | null;
+          const status = row.status as string | null;
           return {
             type: "student" as const,
             id: row.id as string,
             title: row.full_name as string,
-            subtitle: `${uid ? `${uid} · ` : ""}${row.roll_number as string} · ${cn ?? "Class"}`,
+            subtitle: `${gr ?? "—"} | ${row.full_name as string} | ${cn ?? "Class"} | ${status ?? "active"}${uid ? ` | ${uid}` : ""}`,
           };
         }) ?? [];
 
@@ -123,7 +126,7 @@ export function SearchBar() {
         <input
           ref={inputRef}
           className="w-full bg-transparent text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
-          placeholder="Search students or teachers… (Ctrl+K)"
+          placeholder="Search GR#, name, SMS ID, roll, or teacher… (Ctrl+K)"
           value={q}
           onChange={(e) => {
             setQ(e.target.value);

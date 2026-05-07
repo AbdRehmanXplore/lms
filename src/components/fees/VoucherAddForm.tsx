@@ -9,6 +9,7 @@ import { formatCurrency } from "@/lib/utils/formatCurrency";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
+import { FEE_TYPES } from "@/lib/constants/fees";
 
 const MONTHS = [
   "January",
@@ -27,40 +28,50 @@ const MONTHS = [
 
 type Student = {
   id: string;
+  gr_number: string | null;
   full_name: string;
   roll_number: string;
   father_name: string;
   student_uid: string | null;
   profile_photo: string | null;
+  section: string | null;
+  shift: string | null;
   class_id: string | null;
   classes: { name: string } | { name: string }[] | null;
+};
+
+type FeeRow = {
+  feeType: string;
+  amount: string;
 };
 
 export function VoucherAddForm() {
   const supabase = useSupabaseClient();
   const router = useRouter();
+  const issueDate = new Date().toISOString().slice(0, 10);
+
   const [students, setStudents] = useState<Student[]>([]);
   const [studentId, setStudentId] = useState("");
+  const [grSearch, setGrSearch] = useState("");
   const [monthIdx, setMonthIdx] = useState(new Date().getMonth());
   const [year, setYear] = useState(new Date().getFullYear());
-  const [amount, setAmount] = useState("2500");
-  const [dueDate, setDueDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dueDate, setDueDate] = useState(issueDate);
   const [remarks, setRemarks] = useState("");
   const [loading, setLoading] = useState(false);
   const [unpaid, setUnpaid] = useState<{ id: string; month: string; amount: number; due_date: string }[]>([]);
   const [bulkClassId, setBulkClassId] = useState("");
   const [bulkAmount, setBulkAmount] = useState("2500");
   const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
-  const [combined, setCombined] = useState(false);
   const [createAsPaid, setCreateAsPaid] = useState(false);
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paymentDate, setPaymentDate] = useState(issueDate);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [receivedBy, setReceivedBy] = useState("");
+  const [feeRows, setFeeRows] = useState<FeeRow[]>([{ feeType: "Tuition", amount: "2500" }]);
 
   useEffect(() => {
     void supabase
       .from("students")
-      .select("id,full_name,roll_number,father_name,student_uid,profile_photo,class_id,classes(name)")
+      .select("id,gr_number,full_name,roll_number,father_name,student_uid,profile_photo,section,shift,class_id,classes(name)")
       .eq("status", "active")
       .order("roll_number")
       .then(({ data }) => setStudents((data ?? []) as Student[]));
@@ -84,38 +95,51 @@ export function VoucherAddForm() {
       .then(({ data }) => setUnpaid(data ?? []));
   }, [studentId, supabase]);
 
-  const monthLabel = useMemo(() => `${MONTHS[monthIdx]} ${year}`, [monthIdx, year]);
+  useEffect(() => {
+    const selectedStudent = students.find((student) => student.id === studentId);
+    if (selectedStudent?.gr_number) {
+      setGrSearch(selectedStudent.gr_number);
+    }
+  }, [studentId, students]);
 
+  useEffect(() => {
+    const input = grSearch.trim().toUpperCase();
+    if (!input) return;
+    const matched = students.find((student) => (student.gr_number ?? "").toUpperCase() === input);
+    if (matched && matched.id !== studentId) {
+      setStudentId(matched.id);
+    }
+  }, [grSearch, studentId, students]);
+
+  const monthLabel = useMemo(() => `${MONTHS[monthIdx]} ${year}`, [monthIdx, year]);
   const selected = students.find((s) => s.id === studentId);
+  const validFeeRows = useMemo(() => feeRows.filter((row) => row.feeType.trim() && Number(row.amount) > 0), [feeRows]);
+  const totalAmount = useMemo(() => validFeeRows.reduce((sum, row) => sum + Number(row.amount), 0), [validFeeRows]);
 
   const submit = async () => {
-    if (!studentId || !amount) {
-      toast.error("Select student and amount");
+    if (!studentId || validFeeRows.length === 0) {
+      toast.error("Select student and add at least one fee row");
       return;
     }
+
     setLoading(true);
-    const y = year;
-    const voucherNumber = await allocateFeeVoucherNumber(supabase, y);
-
-    let total = parseFloat(amount);
-    let lineItems: { month: string; amount: number }[] | null = null;
-
-    if (combined && unpaid.length > 0) {
-      const parts = unpaid.map((u) => ({ month: u.month, amount: Number(u.amount) }));
-      const add = parseFloat(amount);
-      parts.push({ month: monthLabel + " (current)", amount: add });
-      total = parts.reduce((a, p) => a + p.amount, 0);
-      lineItems = parts;
-    }
+    const voucherNumber = await allocateFeeVoucherNumber(supabase, year);
+    const lineItems = validFeeRows.map((row) => ({
+      feeType: row.feeType,
+      amount: Number(row.amount),
+      month: monthLabel,
+    }));
 
     const { error } = await supabase.from("fee_vouchers").insert({
       student_id: studentId,
       voucher_number: voucherNumber,
-      amount: total,
-      amount_paid: createAsPaid ? total : 0,
-      remaining_amount: createAsPaid ? 0 : total,
+      fee_type: lineItems[0]?.feeType ?? "Tuition",
+      amount: totalAmount,
+      amount_paid: createAsPaid ? totalAmount : 0,
+      remaining_amount: createAsPaid ? 0 : totalAmount,
       is_partial: false,
       due_date: dueDate,
+      issue_date: issueDate,
       month: monthLabel,
       status: createAsPaid ? "paid" : "unpaid",
       payment_date: createAsPaid ? paymentDate : null,
@@ -124,25 +148,13 @@ export function VoucherAddForm() {
       remarks: remarks || null,
       line_items: lineItems,
     });
+
     setLoading(false);
     if (error) {
       toast.error(error.message);
       return;
     }
-    if (combined && createAsPaid && unpaid.length > 0) {
-      await supabase
-        .from("fee_vouchers")
-        .update({
-          status: "paid",
-          payment_date: paymentDate,
-          payment_method: paymentMethod,
-          received_by: receivedBy || null,
-        })
-        .in(
-          "id",
-          unpaid.map((u) => u.id),
-        );
-    }
+
     toast.success(createAsPaid ? "Paid voucher created" : "Voucher created");
     router.push("/fees");
   };
@@ -152,23 +164,27 @@ export function VoucherAddForm() {
       toast.error("Select class and amount");
       return;
     }
+
     setLoading(true);
     const { data: studs } = await supabase.from("students").select("id").eq("class_id", bulkClassId).eq("status", "active");
-    const y = year;
     const amt = parseFloat(bulkAmount);
     let ok = 0;
+
     for (const s of studs ?? []) {
-      const voucherNumber = await allocateFeeVoucherNumber(supabase, y);
+      const voucherNumber = await allocateFeeVoucherNumber(supabase, year);
       const { error } = await supabase.from("fee_vouchers").insert({
         student_id: s.id,
         voucher_number: voucherNumber,
+        fee_type: "Tuition",
         amount: amt,
         amount_paid: 0,
         remaining_amount: amt,
         is_partial: false,
         due_date: dueDate,
+        issue_date: issueDate,
         month: monthLabel,
         status: "unpaid",
+        line_items: [{ feeType: "Tuition", amount: amt, month: monthLabel }],
       });
       if (error) {
         setLoading(false);
@@ -177,6 +193,7 @@ export function VoucherAddForm() {
       }
       ok += 1;
     }
+
     setLoading(false);
     toast.success(`Generated ${ok} voucher${ok === 1 ? "" : "s"}`);
     router.push("/fees");
@@ -196,24 +213,36 @@ export function VoucherAddForm() {
                 </li>
               ))}
             </ul>
-            <label className="mt-2 flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={combined} onChange={(e) => setCombined(e.target.checked)} />
-              Combine unpaid + current month in one voucher
-            </label>
           </div>
         )}
+
+        <div>
+          <Input
+            label="Find by GR Number"
+            placeholder="e.g. KG-001"
+            value={grSearch}
+            onChange={(e) => setGrSearch(e.target.value.toUpperCase())}
+          />
+        </div>
 
         <div>
           <label className="text-sm text-slate-300">Student</label>
           <select
             className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
             value={studentId}
-            onChange={(e) => setStudentId(e.target.value)}
+            onChange={(e) => {
+              const nextId = e.target.value;
+              setStudentId(nextId);
+              const selectedStudent = students.find((student) => student.id === nextId);
+              if (selectedStudent?.gr_number) {
+                setGrSearch(selectedStudent.gr_number);
+              }
+            }}
           >
             <option value="">Select student</option>
             {students.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.roll_number} — {s.full_name}
+                {s.gr_number ?? "—"} — {s.full_name}
               </option>
             ))}
           </select>
@@ -222,11 +251,14 @@ export function VoucherAddForm() {
         {selected && (
           <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3">
             <ProfilePhoto src={selected.profile_photo} alt={selected.full_name} name={selected.full_name} size={56} />
-            <p className="text-sm text-slate-300">
-              <span className="font-mono text-xs text-blue-200">{selected.student_uid ?? "—"}</span>
+            <p className="text-sm leading-6 text-slate-300">
+              <span className="font-mono text-xs text-amber-200">GR#: {selected.gr_number ?? "—"}</span>
+              <br />
+              <span className="font-mono text-xs text-blue-200">SMS ID: {selected.student_uid ?? "—"}</span>
               <br />
               Father: {selected.father_name} · Class:{" "}
-              {Array.isArray(selected.classes) ? selected.classes[0]?.name : selected.classes?.name ?? "—"}
+              {Array.isArray(selected.classes) ? selected.classes[0]?.name : selected.classes?.name ?? "—"} · Section:{" "}
+              {selected.section ?? "A"} · Shift: {selected.shift ?? "Morning"}
             </p>
           </div>
         )}
@@ -257,8 +289,57 @@ export function VoucherAddForm() {
           </div>
         </div>
 
-        <Input label="Amount (PKR)" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <div className="space-y-3 rounded-xl border border-slate-700 p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-slate-200">Fee Type | Amount</p>
+            <Button type="button" variant="secondary" onClick={() => setFeeRows((prev) => [...prev, { feeType: "Tuition", amount: "" }])}>
+              Add Row (+)
+            </Button>
+          </div>
+          {feeRows.map((row, index) => (
+            <div key={`${index}-${row.feeType}`} className="grid gap-3 md:grid-cols-[1fr_180px_auto]">
+              <div className="space-y-1">
+                <label className="text-sm text-slate-300">Fee Type</label>
+                <select
+                  className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
+                  value={row.feeType}
+                  onChange={(e) =>
+                    setFeeRows((prev) => prev.map((item, i) => (i === index ? { ...item, feeType: e.target.value } : item)))
+                  }
+                >
+                  {FEE_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <Input
+                label="Amount"
+                value={row.amount}
+                onChange={(e) =>
+                  setFeeRows((prev) => prev.map((item, i) => (i === index ? { ...item, amount: e.target.value } : item)))
+                }
+              />
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  variant="danger"
+                  disabled={feeRows.length === 1}
+                  onClick={() => setFeeRows((prev) => prev.filter((_, i) => i !== index))}
+                >
+                  Remove
+                </Button>
+              </div>
+            </div>
+          ))}
+          <div className="rounded-lg bg-slate-900/60 px-3 py-2 text-sm font-semibold text-emerald-300">
+            Total: {formatCurrency(totalAmount)}
+          </div>
+        </div>
+
         <Input label="Due date" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        <Input label="Voucher date" type="date" value={issueDate} readOnly />
         <Input label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={createAsPaid} onChange={(e) => setCreateAsPaid(e.target.checked)} />
@@ -280,11 +361,6 @@ export function VoucherAddForm() {
               </select>
             </div>
             <Input label="Received By" value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} />
-            {combined && unpaid.length > 0 && (
-              <p className="text-xs text-emerald-300">
-                Previous unpaid vouchers will be marked paid and moved to Paid list.
-              </p>
-            )}
           </div>
         )}
 
@@ -295,7 +371,7 @@ export function VoucherAddForm() {
 
       <div className="surface-card space-y-4 p-6">
         <h2 className="text-lg font-semibold">Bulk (class)</h2>
-        <p className="text-sm text-slate-400">Creates one voucher per active student in the class for the selected month.</p>
+        <p className="text-sm text-slate-400">Creates one tuition voucher per active student in the class for the selected month.</p>
         <div>
           <label className="text-sm text-slate-300">Class</label>
           <select
@@ -312,6 +388,7 @@ export function VoucherAddForm() {
           </select>
         </div>
         <Input label="Amount per student" value={bulkAmount} onChange={(e) => setBulkAmount(e.target.value)} />
+        <Input label="Voucher date" type="date" value={issueDate} readOnly />
         <Button variant="secondary" type="button" disabled={loading} onClick={() => void bulkGenerate()}>
           Bulk generate
         </Button>

@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils/cn";
 import { currentSalaryMonthYear } from "@/lib/utils/salaryPeriod";
 import { formatDbTimeTo12h } from "@/lib/utils/teacherAttendanceTime";
 import { scheduleEffectLoad } from "@/lib/utils/scheduleEffectLoad";
+import { calculateGrade } from "@/lib/utils/calculateGrade";
 
 const PIE_COLORS = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
 
@@ -58,14 +59,34 @@ type ActivityItem = { id: string; label: string; sub: string; at: string; icon: 
 
 type RecentFeeRow = {
   id: string;
+  month: string;
   amount: number;
   amount_paid: number | null;
   payment_date: string | null;
   status: string;
   students:
-    | { full_name: string; classes: { name: string } | { name: string }[] | null }
-    | { full_name: string; classes: { name: string } | { name: string }[] | null }[]
+    | { full_name: string; gr_number: string | null; classes: { name: string } | { name: string }[] | null }
+    | { full_name: string; gr_number: string | null; classes: { name: string } | { name: string }[] | null }[]
     | null;
+};
+
+type AttendanceTableRow = {
+  className: string;
+  total: number;
+  present: number;
+  absent: number;
+  late: number;
+};
+
+type RecentResultTableRow = {
+  studentId: string;
+  grNumber: string | null;
+  studentName: string;
+  className: string;
+  exam: string;
+  total: number;
+  percentage: number;
+  grade: string;
 };
 
 function classNameFromStudent(row: { classes?: { name: string } | { name: string }[] | null } | null) {
@@ -146,6 +167,8 @@ export function DashboardHome() {
   const [salaryDueList, setSalaryDueList] = useState<SalaryDueRow[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [recentFees, setRecentFees] = useState<RecentFeeRow[]>([]);
+  const [attendanceTable, setAttendanceTable] = useState<AttendanceTableRow[]>([]);
+  const [recentResultsTable, setRecentResultsTable] = useState<RecentResultTableRow[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -201,6 +224,8 @@ export function DashboardHome() {
         { data: rf },
         { data: tsal },
         { data: res },
+        { data: attClassRows },
+        { data: resultTableRows },
       ] = await Promise.all([
         supabase.from("attendance").select("status").eq("date", today),
         supabase.from("teacher_attendance").select("status, check_in_time, teachers(full_name)").eq("date", today),
@@ -215,7 +240,7 @@ export function DashboardHome() {
         supabase.from("fee_vouchers").select("amount,amount_paid,remaining_amount,status, students(classes(name))").limit(1000),
         supabase
           .from("fee_vouchers")
-          .select("id,amount,amount_paid,payment_date,status,students(full_name,classes(name))")
+          .select("id,month,amount,amount_paid,payment_date,status,students(full_name,gr_number,classes(name))")
           .in("status", ["paid", "partial"])
           .order("payment_date", { ascending: false, nullsFirst: false })
           .limit(10),
@@ -233,6 +258,12 @@ export function DashboardHome() {
           .order("payment_date", { ascending: false, nullsFirst: false })
           .limit(3),
         supabase.from("results").select("id,created_at").order("created_at", { ascending: false }).limit(3),
+        supabase.from("attendance").select("status,students(classes(name))").eq("date", today),
+        supabase
+          .from("results")
+          .select("student_id,exam_type,exam_year,marks_obtained,max_marks,students(full_name,gr_number,classes(name))")
+          .order("updated_at", { ascending: false })
+          .limit(200),
       ]);
 
       const rows = attToday ?? [];
@@ -403,6 +434,65 @@ export function DashboardHome() {
           ...row,
           students: Array.isArray(row.students) ? row.students[0] ?? null : row.students,
         })),
+      );
+
+      const attendanceMap = new Map<string, AttendanceTableRow>();
+      (byClass ?? []).forEach((row: { classes: { name: string } | { name: string }[] | null }) => {
+        const name = classNameFromStudent(row);
+        attendanceMap.set(name, { className: name, total: (attendanceMap.get(name)?.total ?? 0) + 1, present: 0, absent: 0, late: 0 });
+      });
+      (attClassRows ?? []).forEach((row: Record<string, unknown>) => {
+        const studentJoin = row.students as { classes?: { name: string } | { name: string }[] | null } | { classes?: { name: string } | { name: string }[] | null }[] | null;
+        const studentObj = Array.isArray(studentJoin) ? studentJoin[0] : studentJoin;
+        const className = classNameFromStudent(studentObj ?? null);
+        const current = attendanceMap.get(className) ?? { className, total: 0, present: 0, absent: 0, late: 0 };
+        if (row.status === "present") current.present += 1;
+        if (row.status === "absent") current.absent += 1;
+        if (row.status === "late") {
+          current.late += 1;
+          current.present += 1;
+        }
+        attendanceMap.set(className, current);
+      });
+      setAttendanceTable([...attendanceMap.values()].sort((a, b) => a.className.localeCompare(b.className)).slice(0, 10));
+
+      const resultMap = new Map<string, RecentResultTableRow & { max: number }>();
+      ((resultTableRows ?? []) as Record<string, unknown>[]).forEach((row) => {
+        const studentJoin = row.students as Record<string, unknown> | Record<string, unknown>[] | null;
+        const studentObj = Array.isArray(studentJoin) ? studentJoin[0] : studentJoin;
+        if (!studentObj) return;
+        const key = `${row.student_id as string}|${row.exam_type as string}|${row.exam_year as string}`;
+        const current = resultMap.get(key) ?? {
+          studentId: row.student_id as string,
+          grNumber: (studentObj.gr_number as string | null) ?? null,
+          studentName: String(studentObj.full_name ?? "Student"),
+          className: classNameFromStudent(studentObj as { classes?: { name: string } | { name: string }[] | null }),
+          exam: `${row.exam_type as string} ${row.exam_year as string}`,
+          total: 0,
+          percentage: 0,
+          grade: "—",
+          max: 0,
+        };
+        current.total += Number(row.marks_obtained ?? 0);
+        current.max += Number(row.max_marks ?? 0);
+        resultMap.set(key, current);
+      });
+      setRecentResultsTable(
+        [...resultMap.values()]
+          .map((row) => {
+            const percentage = row.max > 0 ? (row.total / row.max) * 100 : 0;
+            return {
+              studentId: row.studentId,
+              grNumber: row.grNumber,
+              studentName: row.studentName,
+              className: row.className,
+              exam: row.exam,
+              total: row.total,
+              percentage,
+              grade: calculateGrade(percentage),
+            };
+          })
+          .slice(0, 10),
       );
 
       setStats({
@@ -826,17 +916,19 @@ export function DashboardHome() {
 
       <section className="surface-card overflow-hidden transition-all duration-200 hover:shadow-lg">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-          <h3 className="font-semibold text-[var(--text-primary)]">Recent fee payments</h3>
+          <h3 className="font-semibold text-[var(--text-primary)]">Recent fee activity</h3>
           <Link href="/fees" className="inline-flex items-center gap-1 text-sm font-medium text-[var(--accent-blue)] hover:underline">
             View all <ArrowRight size={14} />
           </Link>
         </div>
         <div className="overflow-x-auto">
-          <table className="data-table min-w-[640px]">
+          <table className="data-table min-w-[860px]">
             <thead className="sticky top-0 z-[1]">
               <tr>
+                <th>GR#</th>
                 <th>Student</th>
                 <th>Class</th>
+                <th>Month</th>
                 <th>Amount</th>
                 <th>Date</th>
                 <th>Status</th>
@@ -845,15 +937,17 @@ export function DashboardHome() {
             <tbody>
               {recentFees.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
                     No payments yet.
                   </td>
                 </tr>
               ) : (
                 recentFees.map((f, idx) => (
                   <tr key={f.id} className={cn(idx % 2 === 1 && "bg-[var(--bg-surface-2)]/50")}>
+                    <td className="font-mono text-xs text-amber-300">{(Array.isArray(f.students) ? f.students[0] : f.students)?.gr_number ?? "—"}</td>
                     <td className="font-medium">{(Array.isArray(f.students) ? f.students[0] : f.students)?.full_name ?? "—"}</td>
                     <td>{classNameFromStudent(Array.isArray(f.students) ? f.students[0] ?? null : f.students)}</td>
+                    <td>{f.month}</td>
                     <td>{formatCurrency(Number(f.amount_paid ?? f.amount))}</td>
                     <td>{f.payment_date ? new Date(f.payment_date).toLocaleDateString() : "—"}</td>
                     <td>
@@ -868,6 +962,77 @@ export function DashboardHome() {
           </table>
         </div>
       </section>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <section className="surface-card overflow-hidden transition-all duration-200 hover:shadow-lg">
+          <div className="border-b border-[var(--border)] px-4 py-3">
+            <h3 className="font-semibold text-[var(--text-primary)]">Today&apos;s Attendance Summary</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="data-table min-w-[760px]">
+              <thead>
+                <tr>
+                  <th>Class</th>
+                  <th>Total</th>
+                  <th>Present</th>
+                  <th>Absent</th>
+                  <th>Late</th>
+                  <th>Attendance%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {attendanceTable.map((row) => {
+                  const pct = row.total > 0 ? Math.round((row.present / row.total) * 100) : 0;
+                  return (
+                    <tr key={row.className}>
+                      <td>{row.className}</td>
+                      <td>{row.total}</td>
+                      <td>{row.present}</td>
+                      <td>{row.absent}</td>
+                      <td>{row.late}</td>
+                      <td>{pct}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="surface-card overflow-hidden transition-all duration-200 hover:shadow-lg">
+          <div className="border-b border-[var(--border)] px-4 py-3">
+            <h3 className="font-semibold text-[var(--text-primary)]">Recent Results</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="data-table min-w-[760px]">
+              <thead>
+                <tr>
+                  <th>GR#</th>
+                  <th>Student</th>
+                  <th>Class</th>
+                  <th>Exam</th>
+                  <th>Total</th>
+                  <th>%</th>
+                  <th>Grade</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentResultsTable.map((row) => (
+                  <tr key={`${row.studentId}-${row.exam}`}>
+                    <td className="font-mono text-xs text-amber-300">{row.grNumber ?? "—"}</td>
+                    <td>{row.studentName}</td>
+                    <td>{row.className}</td>
+                    <td>{row.exam}</td>
+                    <td>{row.total}</td>
+                    <td>{row.percentage.toFixed(2)}</td>
+                    <td>{row.grade}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

@@ -26,8 +26,10 @@ type StudentRow = {
   father_name: string;
   roll_number: string;
   student_uid: string | null;
+  gr_number: string | null;
   profile_photo: string | null;
   class_id: string | null;
+  section: string | null;
   classes: { name: string } | null;
 };
 
@@ -185,7 +187,7 @@ function AdmitCardPrint({
 
       <div className="mt-2 space-y-0.5 text-[9px] leading-snug">
         <p>
-          <strong>Student ID:</strong> {student.student_uid ?? "—"}
+          <strong>GR#:</strong> {student.gr_number ?? "—"}
         </p>
         <p>
           <strong>Name:</strong> {student.full_name}
@@ -195,6 +197,9 @@ function AdmitCardPrint({
         </p>
         <p>
           <strong>Class:</strong> {clsName}
+        </p>
+        <p>
+          <strong>Section:</strong> {student.section ?? "A"}
         </p>
         <p>
           <strong>Roll No:</strong> {student.roll_number}
@@ -321,7 +326,7 @@ export function AdmitCardsTool() {
 
     const { data: studs } = await supabase
       .from("students")
-      .select("id,full_name,father_name,roll_number,student_uid,profile_photo,class_id,classes(name)")
+      .select("id,full_name,father_name,roll_number,student_uid,gr_number,profile_photo,class_id,section,classes(name)")
       .eq("class_id", classId)
       .eq("status", "active")
       .order("roll_number");

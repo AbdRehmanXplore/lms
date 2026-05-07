@@ -10,6 +10,7 @@ import { ProfilePhoto } from "@/components/shared/ProfilePhoto";
 
 type StudentRow = {
   id: string;
+  gr_number: string | null;
   student_uid: string | null;
   roll_number: string;
   full_name: string;
@@ -40,7 +41,7 @@ export default function ClassDetailPage() {
         supabase.from("classes").select("name").eq("id", classId).maybeSingle(),
         supabase
           .from("students")
-          .select("id,student_uid,roll_number,full_name,father_name,gender,status,profile_photo")
+          .select("id,gr_number,student_uid,roll_number,full_name,father_name,gender,status,profile_photo")
           .eq("class_id", classId)
           .order("roll_number"),
       ]);
@@ -71,6 +72,7 @@ export default function ClassDetailPage() {
       (s) =>
         s.full_name.toLowerCase().includes(q) ||
         s.father_name.toLowerCase().includes(q) ||
+        (s.gr_number?.toLowerCase().includes(q) ?? false) ||
         s.roll_number.toLowerCase().includes(q) ||
         (s.student_uid?.toLowerCase().includes(q) ?? false),
     );
@@ -101,14 +103,15 @@ export default function ClassDetailPage() {
       </div>
 
       <div className="max-w-md">
-        <Input placeholder="Search by student ID, roll no, name, father name" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Input placeholder="Search by GR, SMS ID, roll no, name, father name" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-slate-700">
         <table className="w-full min-w-[900px] text-left text-sm">
           <thead className="bg-slate-800/90 text-slate-300">
             <tr>
-              <th className="p-3">Student ID</th>
+              <th className="p-3">GR#</th>
+              <th className="p-3">SMS ID</th>
               <th className="p-3">Roll No</th>
               <th className="p-3">Name</th>
               <th className="p-3">Father Name</th>
@@ -120,6 +123,7 @@ export default function ClassDetailPage() {
           <tbody>
             {filtered.map((s) => (
               <tr key={s.id} className="border-t border-slate-700">
+                <td className="p-3 font-mono text-xs text-amber-300">{s.gr_number ?? "—"}</td>
                 <td className="p-3 font-mono text-xs text-blue-300">{s.student_uid ?? "—"}</td>
                 <td className="p-3">{s.roll_number}</td>
                 <td className="p-3">
@@ -145,7 +149,7 @@ export default function ClassDetailPage() {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={7}>
+                <td className="p-3 text-slate-500" colSpan={8}>
                   No students found.
                 </td>
               </tr>

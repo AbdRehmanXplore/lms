@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 
 export type StudentRow = {
   id: string;
+  gr_number: string | null;
   student_uid: string | null;
   roll_number: string;
   full_name: string;
@@ -32,6 +33,7 @@ export function StudentTable({ students }: Props) {
       const matchQ =
         !q ||
         s.full_name.toLowerCase().includes(q) ||
+        (s.gr_number?.toLowerCase().includes(q) ?? false) ||
         s.roll_number.toLowerCase().includes(q) ||
         s.father_name.toLowerCase().includes(q) ||
         (s.student_uid?.toLowerCase().includes(q) ?? false);
@@ -43,10 +45,10 @@ export function StudentTable({ students }: Props) {
   }, [students, search, classFilter, genderFilter, statusFilter]);
 
   const exportCsv = () => {
-    const header = "Roll No,Name,Father,Class,Status";
+    const header = "GR No,SMS ID,Roll No,Name,Father,Class,Status";
     const lines = filtered.map(
       (s) =>
-        `"${s.roll_number}","${s.full_name.replace(/"/g, '""')}","${s.father_name.replace(/"/g, '""')}","${s.classes?.name ?? ""}","${s.status}"`,
+        `"${s.gr_number ?? ""}","${s.student_uid ?? ""}","${s.roll_number}","${s.full_name.replace(/"/g, '""')}","${s.father_name.replace(/"/g, '""')}","${s.classes?.name ?? ""}","${s.status}"`,
     );
     const blob = new Blob([[header, ...lines].join("\n")], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -61,7 +63,7 @@ export function StudentTable({ students }: Props) {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
         <div className="flex-1">
-          <Input placeholder="Search name, roll, father" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input placeholder="Search GR, SMS ID, name, roll, father" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Input placeholder="Filter class name" value={classFilter} onChange={(e) => setClassFilter(e.target.value)} />
         <select
@@ -94,7 +96,8 @@ export function StudentTable({ students }: Props) {
           <thead className="bg-slate-800/80 text-slate-300">
             <tr>
               <th className="p-3">Photo</th>
-              <th className="p-3">Student ID</th>
+              <th className="p-3">GR#</th>
+              <th className="p-3">SMS ID</th>
               <th className="p-3">Roll</th>
               <th className="p-3">Name</th>
               <th className="p-3">Father</th>
@@ -109,7 +112,8 @@ export function StudentTable({ students }: Props) {
                   <td className="p-3">
                     <ProfilePhoto src={s.profile_photo} alt={s.full_name} name={s.full_name} size={32} />
                   </td>
-                  <td className="p-3 font-mono text-sm font-bold text-blue-300">{s.student_uid ?? "—"}</td>
+                  <td className="p-3 font-mono text-sm font-bold text-amber-300">{s.gr_number ?? "—"}</td>
+                  <td className="p-3 font-mono text-xs text-blue-300">{s.student_uid ?? "—"}</td>
                   <td className="p-3">{s.roll_number}</td>
                   <td className="p-3 font-medium">{s.full_name}</td>
                   <td className="p-3">{s.father_name}</td>
